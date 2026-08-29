@@ -167,3 +167,4 @@
 - 2026-08-29 21:12（UTC+8）：阶段 5 提交 `e04274d feat(phase-5): complete retry dead-letter and lease recovery` 已推送到 GitHub `main` 分支。
 - 2026-08-29 21:25（UTC+8）：阶段 6 按测试驱动顺序新增 scope 隔离、非有限令牌量、公开 `limiter` 包、server 配置校验和双 server 共享 Token Bucket 测试；预实现验证先确认公开包和 scope 构造缺失。
 - 2026-08-29 21:30（UTC+8）：阶段 6 完成：`server.Config.TokenBucket` 改用公开 `limiter.TokenBucket`，同 scope 使用 `gte:limiter:<scope>` 共享 Redis bucket，不同 scope 隔离；Lua 继续使用 Redis 服务端时间并在 `Claim` 前扣令牌。`go test ./internal/limiter ./server -race`、`go test ./... -race`、`go build ./...`、`go vet ./...` 和 `GTE_REAL_REDIS=1 go test ./server -run '^TestTwoServersShareOneTokenBucketRealRedis$' -race` 均通过；真实 Redis 双 server 的 4 个任务时间跨度实测为 304.7ms。阶段 6 状态更新为 `DONE`。
+- 2026-08-29 21:35（UTC+8）：阶段 6 提交 `53bdbeb feat(phase-6): verify distributed token bucket scheduling limits` 已推送到 GitHub `main` 分支。
