@@ -43,6 +43,13 @@ flowchart LR
 - `server.Config.Metrics`：可选的实际 worker 路径计数器。
 - `server.Config.HeartbeatInterval` 必须小于 `server.Config.LeaseDuration`；不满足时 `Start` 返回 `ErrInvalidConfig`。
 
+## 验证分层
+
+- miniredis 测试用于快速验证 Lua 状态转换、调度和并发逻辑，不代表真实 Redis 网络性能。
+- `GTE_REAL_REDIS=1` 的测试连接本机真实 Redis，验证 Redis 协议、进程和网络边界；它们不提供生产容量结论。
+- `TimeWheel` 只负责本地 dispatcher 唤醒，scheduled/retry 状态仍持久化在 Redis。
+- 真实 Redis 的 benchmark 与功能验收命令、机器条件和采样限制记录在 `docs/benchmark-report.md`。
+
 ## 阶段 4 延时调度验证
 
 - `internal/timer.TimeWheel` 支持注入时钟、并发 Schedule/Cancel 和显式 `Wake`。回调串行执行，慢回调会延迟后续回调；已经开始执行的回调不会被取消。

@@ -10,7 +10,7 @@ Go-TaskEngine 是一个基于 Redis 的 Go 任务执行引擎。它提供客户�
 - `server/`：调度任务、运行 worker 和处理生命周期。
 - `internal/`：暂不对外公开的定时器、限流和 Redis 实现。
 - `examples/`：图像处理和 C2PA 签名的模拟 producer/worker；`examples/support/` 提供共享命令行配置、Redis 连通性检查和 metrics 输出。
-- `docs/`：架构、运行和性能验证文档。
+- `docs/`：架构、运行、真实 Redis 验收和性能验证文档。
 - `TASK_ENGINE_PLAN.md`：唯一的阶段计划和实际实施日志。
 
 ## 前置条件
@@ -29,6 +29,8 @@ go vet ./...
 ```
 
 当前示例是模拟业务处理，不代表已经接入真实图像处理库或真实 C2PA 签名服务。当前性能文档中的 miniredis 结果也不代表真实 Redis 网络环境的生产吞吐。
+
+阶段 9 提供真实 Redis benchmark、功能验收测试、Windows PowerShell Redis 启停脚本和 GitHub Actions CI；所有实测条件与边界见 [`docs/benchmark-report.md`](docs/benchmark-report.md)。
 
 ## 阶段 8 最小演示
 
