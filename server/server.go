@@ -114,16 +114,20 @@ type Server struct {
 	cfg     Config
 	queues  []string
 
-	mu           sync.Mutex
-	state        serverState
-	stopCh       chan struct{}
-	stopOne      sync.Once
-	ctx          context.Context
-	cancel       context.CancelFunc
-	wheel        *timer.TimeWheel
-	dispatchWake chan struct{}
-	wg           sync.WaitGroup
-	active       map[string]*model.TaskMessage
+	mu            sync.Mutex
+	state         serverState
+	stopCh        chan struct{}
+	stopOne       sync.Once
+	ctx           context.Context
+	cancel        context.CancelFunc
+	handlerCtx    context.Context
+	handlerCancel context.CancelFunc
+	wheel         *timer.TimeWheel
+	dispatchWake  chan struct{}
+	dispatchDone  chan struct{}
+	workers       sync.WaitGroup
+	maintenance   sync.WaitGroup
+	active        map[string]*model.TaskMessage
 }
 
 type serverState uint8
@@ -165,23 +169,24 @@ func (s *Server) Start() error {
 		return errors.New("server store and handler are required")
 	}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
+	s.handlerCtx, s.handlerCancel = context.WithCancel(s.ctx)
 	s.stopCh = make(chan struct{})
 	s.dispatchWake = make(chan struct{}, 1)
+	s.dispatchDone = make(chan struct{})
 	s.wheel = timer.New()
 	s.state = stateRunning
 	jobs := make(chan *model.TaskMessage)
-	s.wg.Add(1)
+	s.maintenance.Add(1)
 	go func() {
-		defer s.wg.Done()
+		defer s.maintenance.Done()
 		s.wheel.Run(s.ctx)
 	}()
-	s.wg.Add(1)
 	go s.dispatch(jobs)
 	for i := 0; i < s.cfg.Concurrency; i++ {
-		s.wg.Add(1)
+		s.workers.Add(1)
 		go s.worker(jobs)
 	}
-	s.wg.Add(2)
+	s.maintenance.Add(2)
 	go s.heartbeatLoop()
 	go s.recoveryLoop()
 	return nil
@@ -194,7 +199,7 @@ func (s *Server) reportError(err error) {
 }
 
 func (s *Server) dispatch(jobs chan<- *model.TaskMessage) {
-	defer s.wg.Done()
+	defer close(s.dispatchDone)
 	defer close(jobs)
 	for {
 		select {
@@ -295,7 +300,7 @@ func (s *Server) waitOrStop(duration time.Duration) bool {
 }
 
 func (s *Server) worker(jobs <-chan *model.TaskMessage) {
-	defer s.wg.Done()
+	defer s.workers.Done()
 	for msg := range jobs {
 		s.trackActive(msg)
 		s.process(msg)
@@ -310,7 +315,7 @@ func (s *Server) process(msg *model.TaskMessage) {
 			s.cfg.Metrics.RecordDuration(time.Since(started))
 		}
 	}()
-	ctx := s.ctx
+	ctx := s.handlerCtx
 	cancel := func() {}
 	if !msg.Deadline.IsZero() {
 		ctx, cancel = context.WithDeadline(ctx, msg.Deadline)
@@ -355,7 +360,7 @@ func (s *Server) process(msg *model.TaskMessage) {
 }
 
 func (s *Server) heartbeatLoop() {
-	defer s.wg.Done()
+	defer s.maintenance.Done()
 	ticker := time.NewTicker(s.cfg.HeartbeatInterval)
 	defer ticker.Stop()
 	for {
@@ -379,7 +384,7 @@ func (s *Server) heartbeatLoop() {
 }
 
 func (s *Server) recoveryLoop() {
-	defer s.wg.Done()
+	defer s.maintenance.Done()
 	ticker := time.NewTicker(s.cfg.RecoveryInterval)
 	defer ticker.Stop()
 	for {
@@ -475,28 +480,82 @@ func (s *Server) trackActive(msg *model.TaskMessage) {
 }
 func (s *Server) untrackActive(id string) { s.mu.Lock(); delete(s.active, id); s.mu.Unlock() }
 
-func (s *Server) Stop() {
+func (s *Server) requestStop() bool {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.state != stateRunning {
-		s.mu.Unlock()
-		return
+		return false
 	}
 	s.state = stateStopped
-	s.stopOne.Do(func() { close(s.stopCh); s.cancel() })
-	s.mu.Unlock()
+	s.stopOne.Do(func() {
+		close(s.stopCh)
+		s.handlerCancel()
+	})
+	return true
+}
+
+// Stop prevents new task claims and cancels active handlers without waiting.
+// Call Shutdown when the caller must wait for workers and maintenance loops.
+func (s *Server) Stop() {
+	if s.requestStop() {
+		s.cancel()
+	}
+}
+
+func waitUntil(done <-chan struct{}, deadline time.Time) bool {
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}
+	timer := time.NewTimer(remaining)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
 }
 
 func (s *Server) Shutdown() error {
-	s.Stop()
-	done := make(chan struct{})
-	go func() { s.wg.Wait(); close(done) }()
-	select {
-	case <-done:
+	s.mu.Lock()
+	if s.state == stateNew {
+		s.mu.Unlock()
 		return nil
-	case <-time.After(s.cfg.ShutdownTimeout):
+	}
+	deadline := time.Now().Add(s.cfg.ShutdownTimeout)
+	s.mu.Unlock()
+
+	s.requestStop()
+	workDone := make(chan struct{})
+	go func() {
+		<-s.dispatchDone
+		s.workers.Wait()
+		close(workDone)
+	}()
+	if !waitUntil(workDone, deadline) {
+		s.cancel()
 		s.requeueActive()
 		return fmt.Errorf("shutdown timeout after %s", s.cfg.ShutdownTimeout)
 	}
+
+	// The intake and handlers are finished. Stop heartbeat, recovery, and local timers now.
+	s.cancel()
+	maintenanceDone := make(chan struct{})
+	go func() {
+		s.maintenance.Wait()
+		close(maintenanceDone)
+	}()
+	if !waitUntil(maintenanceDone, deadline) {
+		s.requeueActive()
+		return fmt.Errorf("shutdown timeout after %s", s.cfg.ShutdownTimeout)
+	}
+	return nil
 }
 
 func (s *Server) requeueActive() {
@@ -513,12 +572,18 @@ func (s *Server) requeueActive() {
 	}
 }
 
-// Run starts the server and stops it when ctx is canceled.
+// Run starts the server and stops it when ctx is canceled or Stop is called.
 func (s *Server) Run(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if err := s.Start(); err != nil {
 		return err
 	}
-	<-ctx.Done()
+	select {
+	case <-ctx.Done():
+	case <-s.stopCh:
+	}
 	return s.Shutdown()
 }
 
@@ -533,6 +598,7 @@ func (s *Server) RunSignals(ctx context.Context, signals <-chan os.Signal) error
 	select {
 	case <-ctx.Done():
 	case <-signals:
+	case <-s.stopCh:
 	}
 	return s.Shutdown()
 }

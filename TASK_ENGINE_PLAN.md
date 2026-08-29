@@ -104,7 +104,7 @@
 - 阶段 4：`DONE` —— `TimeWheel` 已支持可注入时钟、并发 Schedule/Cancel、慢回调串行语义和显式唤醒；dispatcher 使用本地定时器唤醒 Redis 到期扫描，Redis Lua 脚本负责持久状态搬运和重复消费保护；新增 500ms 跨秒、重启发现、双 dispatcher 和危险 heartbeat 配置测试；阶段测试、全量测试、构建和 vet 均通过。
 - 阶段 5：`DONE` —— 已实现带抖动和上限的指数退避、不可重试和最大重试处理、死信分页查询/按 ID 查询/重放/删除/清理、heartbeat 和 recovery loop；新增 miniredis 状态测试及真实 Redis 独立进程 lease 故障恢复测试，阶段测试、全量测试、构建和 vet 均通过。
 - 阶段 6：`DONE` —— 已将 Token Bucket 通过公开 `limiter` 包暴露，补充 scope 隔离、非有限令牌量和 server 配置校验；新增两个 server 共享同一 Redis bucket 的 miniredis 测试，并通过 `GTE_REAL_REDIS=1` 的真实 Redis 双实例测试；阶段 race、全量测试、构建和 vet 均通过。
-- 阶段 7：`PLANNED`
+- 阶段 7：`DONE` —— 统一 `Start`、`Stop`、`Shutdown`、`Run`、`RunSignals` 的状态和 nil context 行为；`Shutdown` 按停止领取/转发、等待 handler/worker、停止维护循环的顺序执行，超时任务进入 requeue/recovery；新增重复启动/关闭、外部 Stop、nil context、信号、handler 取消和忽略 context 测试，阶段测试、全量测试、构建和 vet 均通过。
 - 阶段 8：`PLANNED`
 - 阶段 9：`PLANNED`
 
@@ -168,3 +168,5 @@
 - 2026-08-29 21:25（UTC+8）：阶段 6 按测试驱动顺序新增 scope 隔离、非有限令牌量、公开 `limiter` 包、server 配置校验和双 server 共享 Token Bucket 测试；预实现验证先确认公开包和 scope 构造缺失。
 - 2026-08-29 21:30（UTC+8）：阶段 6 完成：`server.Config.TokenBucket` 改用公开 `limiter.TokenBucket`，同 scope 使用 `gte:limiter:<scope>` 共享 Redis bucket，不同 scope 隔离；Lua 继续使用 Redis 服务端时间并在 `Claim` 前扣令牌。`go test ./internal/limiter ./server -race`、`go test ./... -race`、`go build ./...`、`go vet ./...` 和 `GTE_REAL_REDIS=1 go test ./server -run '^TestTwoServersShareOneTokenBucketRealRedis$' -race` 均通过；真实 Redis 双 server 的 4 个任务时间跨度实测为 304.7ms。阶段 6 状态更新为 `DONE`。
 - 2026-08-29 21:35（UTC+8）：阶段 6 提交 `53bdbeb feat(phase-6): verify distributed token bucket scheduling limits` 已推送到 GitHub `main` 分支。
+- 2026-08-29 21:47（UTC+8）：阶段 7 先补充重复 Start/Shutdown、Shutdown 后 Start、Run(nil)、Run context 取消、RunSignals context 取消、直接 Stop 和 handler 忽略 context 测试；预实现验证确认 `Run(nil)` 会因访问空 context 发生 panic。
+- 2026-08-29 21:54（UTC+8）：阶段 7 完成：handler 使用独立 context，`Shutdown` 分阶段等待 dispatcher/worker 后再停止 heartbeat、recovery 和本地 timer；`Run` 支持 nil context 并响应外部 Stop，`RunSignals` 支持外部 Stop 和 context 取消，超时继续执行 active 任务 requeue。`go test ./server -run 'Test.*Shutdown|Test.*Signal' -race`、`go test ./... -race`、`go build ./...`、`go vet ./...` 均通过。阶段 7 状态更新为 `DONE`。

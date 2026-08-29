@@ -12,7 +12,9 @@ go run ./examples/c2pa-signing/cmd/worker
 go run ./examples/c2pa-signing/cmd/producer
 ```
 
-worker 收到 Ctrl+C 或 `SIGTERM` 后停止领取新任务，等待现有任务；超过 `ShutdownTimeout` 的任务会进入 requeue/recovery 路径。
+- `Stop` 是非阻塞停止请求：停止领取新任务并取消 active handler；调用方需要使用 `Shutdown` 等待 worker 和维护循环完成。
+- `Shutdown` 的顺序是停止领取和转发、取消并等待 handler/worker，再停止 heartbeat、recovery 和本地 timer。超过 `ShutdownTimeout` 时，将当前 active 任务执行 requeue 并返回超时错误。
+- `Run` 和 `RunSignals` 接受 nil context；nil context 按 `context.Background()` 处理，服务仍可通过 `Stop` 结束。
 
 ## 重试与死信管理
 

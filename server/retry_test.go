@@ -92,8 +92,8 @@ func TestServerRecoveryLoopSchedulesExpiredLeaseRetry(t *testing.T) {
 	})
 	s := New(store, handler, Config{
 		Concurrency:       1,
-		LeaseDuration:     50 * time.Millisecond,
-		HeartbeatInterval: 20 * time.Millisecond,
+		LeaseDuration:     time.Second,
+		HeartbeatInterval: 500 * time.Millisecond,
 		RecoveryInterval:  time.Millisecond,
 		RetryBaseDelay:    time.Millisecond,
 		PollInterval:      time.Millisecond,
@@ -110,20 +110,13 @@ func TestServerRecoveryLoopSchedulesExpiredLeaseRetry(t *testing.T) {
 		t.Fatal("handler did not start")
 	}
 	ctx := context.Background()
-	for i := 0; i < 20; i++ {
-		if _, err := rdb.ZAdd(ctx, redisstore.LeaseKey("default"), redis.Z{Score: float64(time.Now().Add(-time.Second).UnixMilli()), Member: "lease-retry-1"}).Result(); err != nil {
-			t.Fatal(err)
-		}
-		if count, err := store.RetryCount(ctx, "default"); err != nil {
-			t.Fatal(err)
-		} else if count == 1 {
-			break
-		}
-		time.Sleep(2 * time.Millisecond)
+	if _, err := rdb.ZAdd(ctx, redisstore.LeaseKey("default"), redis.Z{Score: float64(time.Now().Add(-time.Second).UnixMilli()), Member: "lease-retry-1"}).Result(); err != nil {
+		t.Fatal(err)
 	}
-	if count, err := store.RetryCount(ctx, "default"); err != nil || count != 1 {
-		t.Fatalf("retry count after lease recovery = %d, err=%v", count, err)
-	}
+	waitFor(t, time.Second, func() bool {
+		msg, err := store.Get(ctx, "default", "lease-retry-1")
+		return err == nil && msg.RetryCount >= 1 && msg.LastError == "task lease expired"
+	})
 	close(release)
 	if err := s.Shutdown(); err != nil {
 		t.Fatal(err)

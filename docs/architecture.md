@@ -29,8 +29,8 @@ flowchart LR
 - worker 领取任务时写入 active 和 lease；heartbeat 定期延长 lease。
 - handler 成功后保留任务 Hash，写入 `completed` 状态和完成时间；失败后按 `2^n` 计算重试时间，超过次数后进入 archived。
 - scheduled 和 retry 的到期搬运由 dispatcher 每轮调用 Redis Lua 批量脚本完成；Time Wheel 只负责在本地唤醒下一轮扫描，不保存任务状态，也不替代 Redis。重复 dispatcher 依靠 Lua 的原子移除保证同一任务只进入 pending 一次。
+- shutdown 先停止领取和转发，再取消并等待 handler/worker；worker 完成后停止 heartbeat、recovery 和本地 timer。`ShutdownTimeout` 到期时，当前 active 任务进入 requeue/recovery 路径；忽略 context 的 handler 可能在函数返回后仍继续运行。
 - 这是至少一次执行语义。进程崩溃、网络中断或 shutdown 超时后，任务可能被再次执行，业务 handler 应具备幂等性。
-- shutdown 超时只保证任务进入 requeue/recovery 路径，不保证忽略 context 的外部函数立即停止。
 
 ## 重要配置
 
