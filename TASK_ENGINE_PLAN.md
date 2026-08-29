@@ -143,3 +143,4 @@
 - 2026-08-29 20:08（UTC+8）：阶段 3 提交 `5700e35 feat(phase-3): add routed handlers and observable worker errors` 已推送到 GitHub `main` 分支。推送后确认 Cursor 本地计划文件位于 `.cursor/plans/`，根目录 `.gitignore` 已加入 `.cursor/` 规则；该本地元数据保持忽略，不进入后续 Git 提交。
 - 2026-08-29 20:18（UTC+8）：阶段 4 先补充 `TimeWheel` 注入时钟、并发 Schedule/Cancel、慢回调语义、服务端危险 heartbeat 配置、500ms 跨秒延时、重启发现和双 dispatcher 竞争测试；预实现验证按计划先出现 `NewWithClock` 与 `ErrInvalidConfig` 未定义的编译失败。
 - 2026-08-29 20:19（UTC+8）：阶段 4 完成：`TimeWheel` 使用可注入时钟和串行回调，dispatcher 通过本地定时器唤醒到期扫描，`HeartbeatInterval >= LeaseDuration` 时 `Start` 返回 `ErrInvalidConfig`；修复定时器 goroutine 未计入 `WaitGroup` 导致 shutdown 超时的问题。`go test ./internal/timer ./server -race -timeout 45s -v`、`go test ./... -timeout 60s`、`go build ./...` 和 `go vet ./...` 均通过。跨秒延时连续 5 次实测误差约 1.4–6.3ms。Cursor 本地计划和元数据由根目录 `.gitignore` 的 `.cursor/` 规则忽略，未进入提交范围。
+- 2026-08-29 20:20（UTC+8）：阶段 4 提交 `5f30d13 feat(phase-4): integrate durable delayed dispatch scheduling` 已推送到 GitHub `main` 分支。
