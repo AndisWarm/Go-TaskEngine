@@ -94,7 +94,7 @@
 
 ## 当前阶段状态
 
-- 阶段 0：`DONE` —— 已创建 `.gitignore`、`README.md` 和本计划；`go test ./...`、`go build ./...`、`go vet ./...` 均通过，Git 初始化、远程配置和参考项目忽略规则检查已完成，尚待本阶段提交和推送。
+- 阶段 0：`DONE` —— 已创建 `.gitignore`、`README.md` 和本计划；`go test ./...`、`go build ./...`、`go vet ./...` 均通过，Git 初始化、远程配置和参考项目忽略规则检查已完成；基线提交已推送到 GitHub `main` 分支。
 - 阶段 1：`PLANNED`
 - 阶段 2：`PLANNED`
 - 阶段 3：`PLANNED`
@@ -135,3 +135,4 @@
 - 2026-08-29 16:01（UTC+8）：用户确认执行分阶段落地方案；本次执行开始。当前只读核对确认项目已有 Go 核心代码，但公开包边界、死信管理、Time Wheel 接入、真实 Redis 多实例测试和示例配置仍有缺口。
 - 2026-08-29 16:02（UTC+8）：阶段 0 创建根目录 `.gitignore`、`README.md` 并重写本文件；首次组合命令中的 `go test ./...`、`go build ./...`、`go vet ./...` 均通过，但因当时尚未初始化 Git，最后的 `git check-ignore` 返回“不是 Git 仓库”。
 - 2026-08-29 16:05（UTC+8）：初始化 Git 的 `main` 分支并配置远程 `https://github.com/AndisWarm/Go-TaskEngine.git`；`git check-ignore -v asynq-master asynq-master.zip` 均命中根目录 `.gitignore`。阶段 0 当前代码验证通过，状态为 `DONE`；提交和推送尚未完成。
+- 2026-08-29 16:08（UTC+8）：创建阶段提交 `2055b97 chore(phase-0): establish repository baseline`，暂存区未包含 `asynq-master` 或 `asynq-master.zip`；通过 `git -c http.proxy=http://127.0.0.1:17897 push -u origin main` 成功推送到 GitHub `main` 分支。
