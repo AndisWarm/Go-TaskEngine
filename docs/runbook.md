@@ -14,6 +14,27 @@ go run ./examples/c2pa-signing/cmd/producer
 
 worker 收到 Ctrl+C 或 `SIGTERM` 后停止领取新任务，等待现有任务；超过 `ShutdownTimeout` 的任务会进入 requeue/recovery 路径。
 
+## 重试与死信管理
+
+- 普通 handler 错误按 `RetryBaseDelay * 2^RetryCount` 计算下一次执行时间；`RetryJitter` 是对基础退避的对称随机比例，取值范围为 `0` 到 `1`，`RetryMaxDelay` 限制最终延时上限。
+- 返回 `server.ErrNonRetryable` 的错误直接进入 archived；达到 `MaxRetry` 后也进入 archived。归档记录保留任务内容、重试次数、最后错误和失败时间。
+- `storage.DeadLetterStore` 提供分页查询、按 ID 查询、重放、删除和按时间清理。重放会清零重试次数、清除当前错误，并以 pending 状态重新入队。
+- recovery loop 定期检查过期 lease。恢复和业务处理之间采用至少一次执行语义，故障切换或网络抖动可能造成重复执行，业务 handler 必须幂等。
+
+## 死信操作示例
+
+公开 `storage.DeadLetterStore` 接口提供以下操作：
+
+```go
+page, err := deadLetters.ListDeadLetters(ctx, "default", 0, 20)
+msg, err := deadLetters.GetDeadLetter(ctx, "default", taskID)
+err = deadLetters.ReplayDeadLetter(ctx, "default", taskID)
+err = deadLetters.DeleteDeadLetter(ctx, "default", taskID)
+removed, err := deadLetters.CleanupDeadLetters(ctx, "default", time.Now().Add(-24*time.Hour), 100)
+```
+
+重放会清零重试次数并将任务放回 pending；死信操作仍遵循至少一次执行语义。
+
 ## 测试
 
 不需要外部 Redis 的单元测试使用 miniredis。完整验证命令为：

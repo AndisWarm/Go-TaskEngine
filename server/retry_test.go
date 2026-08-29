@@ -12,6 +12,7 @@ import (
 	"go-taskengine/client"
 	"go-taskengine/internal/model"
 	"go-taskengine/internal/redisstore"
+	"go-taskengine/storage"
 )
 
 func TestExponentialBackoffIsCapped(t *testing.T) {
@@ -27,6 +28,28 @@ func TestExponentialBackoffIsCapped(t *testing.T) {
 	}
 	if got := ExponentialBackoff(10, base, 10*time.Second); got != 10*time.Second {
 		t.Fatal(got)
+	}
+}
+
+func TestExponentialBackoffWithJitterStaysWithinBounds(t *testing.T) {
+	for i := 0; i < 100; i++ {
+		got := ExponentialBackoffWithJitter(0, 10*time.Millisecond, 100*time.Millisecond, 0.5)
+		if got < 5*time.Millisecond || got > 15*time.Millisecond {
+			t.Fatalf("jittered delay = %s, want range [5ms, 15ms]", got)
+		}
+	}
+	for i := 0; i < 100; i++ {
+		got := ExponentialBackoffWithJitter(10, 10*time.Millisecond, 15*time.Millisecond, 0.5)
+		if got <= 0 || got > 15*time.Millisecond {
+			t.Fatalf("capped jittered delay = %s, want (0, 15ms]", got)
+		}
+	}
+}
+
+func TestServerRejectsInvalidRetryJitter(t *testing.T) {
+	s, _ := testServer(t, HandlerFunc(func(context.Context, *TaskMessage) error { return nil }), Config{RetryJitter: 1.1})
+	if err := s.Start(); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("Start error = %v, want ErrInvalidConfig", err)
 	}
 }
 
@@ -48,6 +71,121 @@ func TestServerRetriesThenSucceeds(t *testing.T) {
 	waitFor(t, time.Second, func() bool { return attempts.Load() == 3 })
 	if err := s.Shutdown(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestServerRecoveryLoopSchedulesExpiredLeaseRetry(t *testing.T) {
+	mini := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mini.Addr()})
+	defer rdb.Close()
+	store := redisstore.New(rdb)
+	producer := client.NewClient(store)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var attempts atomic.Int32
+	handler := HandlerFunc(func(_ context.Context, _ *TaskMessage) error {
+		if attempts.Add(1) == 1 {
+			close(started)
+			<-release
+		}
+		return nil
+	})
+	s := New(store, handler, Config{
+		Concurrency:       1,
+		LeaseDuration:     50 * time.Millisecond,
+		HeartbeatInterval: 20 * time.Millisecond,
+		RecoveryInterval:  time.Millisecond,
+		RetryBaseDelay:    time.Millisecond,
+		PollInterval:      time.Millisecond,
+	})
+	if _, err := producer.Enqueue(context.Background(), client.NewTask("lease-retry", nil), client.WithTaskID("lease-retry-1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("handler did not start")
+	}
+	ctx := context.Background()
+	for i := 0; i < 20; i++ {
+		if _, err := rdb.ZAdd(ctx, redisstore.LeaseKey("default"), redis.Z{Score: float64(time.Now().Add(-time.Second).UnixMilli()), Member: "lease-retry-1"}).Result(); err != nil {
+			t.Fatal(err)
+		}
+		if count, err := store.RetryCount(ctx, "default"); err != nil {
+			t.Fatal(err)
+		} else if count == 1 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	if count, err := store.RetryCount(ctx, "default"); err != nil || count != 1 {
+		t.Fatalf("retry count after lease recovery = %d, err=%v", count, err)
+	}
+	close(release)
+	if err := s.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestServerArchivesNonRetryableFailureAsDeadLetter(t *testing.T) {
+	var attempts atomic.Int32
+	s, producer := testServer(t, HandlerFunc(func(context.Context, *TaskMessage) error {
+		attempts.Add(1)
+		return ErrNonRetryable
+	}), Config{PollInterval: time.Millisecond})
+	if _, err := producer.Enqueue(context.Background(), client.NewTask("non-retryable", nil), client.WithTaskID("non-retryable-1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, time.Second, func() bool {
+		count, err := s.store.ArchivedCount(context.Background(), "default")
+		return err == nil && count == 1
+	})
+	if err := s.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+	if attempts.Load() != 1 {
+		t.Fatalf("non-retryable attempts = %d, want 1", attempts.Load())
+	}
+	deadLetters, ok := s.store.(storage.DeadLetterStore)
+	if !ok {
+		t.Fatal("server store does not expose dead-letter management")
+	}
+	msg, err := deadLetters.GetDeadLetter(context.Background(), "default", "non-retryable-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.LastError != ErrNonRetryable.Error() || msg.State != model.StateArchived {
+		t.Fatalf("dead letter = %+v", msg)
+	}
+}
+
+func TestServerArchivesAfterMaximumRetries(t *testing.T) {
+	var attempts atomic.Int32
+	s, producer := testServer(t, HandlerFunc(func(context.Context, *TaskMessage) error {
+		attempts.Add(1)
+		return errors.New("always fails")
+	}), Config{PollInterval: time.Millisecond, RetryBaseDelay: time.Millisecond})
+	if _, err := producer.Enqueue(context.Background(), client.NewTask("max-retry", nil), client.WithTaskID("max-retry-1"), client.WithMaxRetry(1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, time.Second, func() bool {
+		count, err := s.store.ArchivedCount(context.Background(), "default")
+		return err == nil && count == 1
+	})
+	if err := s.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+	if attempts.Load() != 2 {
+		t.Fatalf("maximum retry attempts = %d, want 2", attempts.Load())
 	}
 }
 

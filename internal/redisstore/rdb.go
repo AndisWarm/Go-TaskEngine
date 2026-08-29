@@ -142,6 +142,39 @@ redis.call("ZADD", KEYS[5], rank, ARGV[1])
 return 1
 `)
 
+var replayArchivedScript = redis.NewScript(`
+if redis.call("HGET", KEYS[1], "state") ~= "archived" then return 0 end
+local rank = redis.call("HGET", KEYS[1], "rank")
+if not rank then return 0 end
+if redis.call("ZREM", KEYS[2], ARGV[1]) == 0 then return 0 end
+redis.call("HSET", KEYS[1], "msg", ARGV[2], "state", "pending")
+redis.call("LPUSH", KEYS[3], ARGV[1])
+redis.call("ZADD", KEYS[4], rank, ARGV[1])
+return 1
+`)
+
+var deleteArchivedScript = redis.NewScript(`
+if redis.call("HGET", KEYS[1], "state") ~= "archived" then return 0 end
+if redis.call("ZREM", KEYS[2], ARGV[1]) == 0 then return 0 end
+redis.call("DEL", KEYS[1])
+return 1
+`)
+
+var cleanupArchivedScript = redis.NewScript(`
+local ids = redis.call("ZRANGEBYSCORE", KEYS[1], "-inf", ARGV[1])
+local removed = 0
+local max = tonumber(ARGV[2])
+for _, id in ipairs(ids) do
+  if removed >= max then break end
+  local taskKey = ARGV[3] .. id
+  if redis.call("HGET", taskKey, "state") == "archived" and redis.call("ZREM", KEYS[1], id) == 1 then
+    redis.call("DEL", taskKey)
+    removed = removed + 1
+  end
+end
+return removed
+`)
+
 func (s *Store) Enqueue(ctx context.Context, msg *model.TaskMessage) error {
 	if err := msg.Validate(); err != nil {
 		return err
@@ -326,6 +359,117 @@ func (s *Store) ExpiredIDs(ctx context.Context, now time.Time, queue string, lim
 	return s.client.ZRangeByScore(ctx, LeaseKey(queue), &redis.ZRangeBy{
 		Min: "-inf", Max: strconv.FormatInt(now.UnixMilli(), 10), Offset: 0, Count: int64(limit),
 	}).Result()
+}
+
+// ListDeadLetters returns archived tasks in archive-time order. Offset is zero-based;
+// a non-positive limit uses the default page size of 100.
+func (s *Store) ListDeadLetters(ctx context.Context, queue string, offset, limit int) ([]*model.TaskMessage, error) {
+	if offset < 0 {
+		return nil, errors.New("dead-letter offset cannot be negative")
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	ids, err := s.client.ZRange(ctx, ArchivedKey(queue), int64(offset), int64(offset+limit-1)).Result()
+	if err != nil {
+		return nil, fmt.Errorf("list dead letters: %w", err)
+	}
+	result := make([]*model.TaskMessage, 0, len(ids))
+	for _, id := range ids {
+		msg, err := s.GetDeadLetter(ctx, queue, id)
+		if errors.Is(err, ErrInvalidTransition) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read dead letter %s: %w", id, err)
+		}
+		result = append(result, msg)
+	}
+	return result, nil
+}
+
+// GetDeadLetter returns one archived task.
+func (s *Store) GetDeadLetter(ctx context.Context, queue, id string) (*model.TaskMessage, error) {
+	msg, err := s.Get(ctx, queue, id)
+	if err != nil {
+		return nil, err
+	}
+	if msg.State != model.StateArchived {
+		return nil, ErrInvalidTransition
+	}
+	return msg, nil
+}
+
+// ReplayDeadLetter resets an archived task's retry metadata and returns it to pending.
+func (s *Store) ReplayDeadLetter(ctx context.Context, queue, id string) error {
+	msg, err := s.GetDeadLetter(ctx, queue, id)
+	if err != nil {
+		return err
+	}
+	msg.State = model.StatePending
+	msg.RetryCount = 0
+	msg.LastError = ""
+	msg.LastFailedAt = time.Time{}
+	msg.CompletedAt = time.Time{}
+	msg.RunAt = time.Now()
+	encoded, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("encode replayed dead letter: %w", err)
+	}
+	result, err := replayArchivedScript.Run(ctx, s.client, []string{
+		TaskKey(queue, id), ArchivedKey(queue), PendingKey(queue), PendingRankKey(queue),
+	}, id, encoded).Int()
+	if err != nil {
+		return fmt.Errorf("replay dead letter: %w", err)
+	}
+	if result == 0 {
+		return ErrInvalidTransition
+	}
+	return nil
+}
+
+// DeleteDeadLetter permanently removes one archived task.
+func (s *Store) DeleteDeadLetter(ctx context.Context, queue, id string) error {
+	result, err := deleteArchivedScript.Run(ctx, s.client, []string{TaskKey(queue, id), ArchivedKey(queue)}, id).Int()
+	if err != nil {
+		return fmt.Errorf("delete dead letter: %w", err)
+	}
+	if result == 0 {
+		if _, getErr := s.GetDeadLetter(ctx, queue, id); getErr != nil {
+			return getErr
+		}
+		return ErrInvalidTransition
+	}
+	return nil
+}
+
+// CleanupDeadLetters deletes at most limit archived tasks older than before.
+func (s *Store) CleanupDeadLetters(ctx context.Context, queue string, before time.Time, limit int) (int, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	removed, err := cleanupArchivedScript.Run(ctx, s.client, []string{ArchivedKey(queue)}, before.UnixMilli(), limit, queuePrefix(queue)+"task:").Int()
+	if err != nil {
+		return 0, fmt.Errorf("cleanup dead letters: %w", err)
+	}
+	return removed, nil
+}
+
+// Archived aliases retain terminology used by the Redis key layout.
+func (s *Store) ListArchived(ctx context.Context, queue string, offset, limit int) ([]*model.TaskMessage, error) {
+	return s.ListDeadLetters(ctx, queue, offset, limit)
+}
+func (s *Store) GetArchived(ctx context.Context, queue, id string) (*model.TaskMessage, error) {
+	return s.GetDeadLetter(ctx, queue, id)
+}
+func (s *Store) ReplayArchived(ctx context.Context, queue, id string) error {
+	return s.ReplayDeadLetter(ctx, queue, id)
+}
+func (s *Store) DeleteArchived(ctx context.Context, queue, id string) error {
+	return s.DeleteDeadLetter(ctx, queue, id)
+}
+func (s *Store) CleanupArchived(ctx context.Context, queue string, before time.Time, limit int) (int, error) {
+	return s.CleanupDeadLetters(ctx, queue, before, limit)
 }
 
 func (s *Store) PendingCount(ctx context.Context, queue string) (int64, error) {

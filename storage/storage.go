@@ -26,3 +26,13 @@ type TaskStore interface {
 	ArchivedCount(context.Context, string) (int64, error)
 	ExtendLease(context.Context, string, []string, time.Time, time.Duration) error
 }
+
+// DeadLetterStore manages tasks that have been moved to the archived state.
+// Replay resets the retry counter and returns the task to the pending state.
+type DeadLetterStore interface {
+	ListDeadLetters(context.Context, string, int, int) ([]*model.TaskMessage, error)
+	GetDeadLetter(context.Context, string, string) (*model.TaskMessage, error)
+	ReplayDeadLetter(context.Context, string, string) error
+	DeleteDeadLetter(context.Context, string, string) error
+	CleanupDeadLetters(context.Context, string, time.Time, int) (int, error)
+}

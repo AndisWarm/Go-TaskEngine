@@ -2,7 +2,7 @@
 
 > **执行约束：** 后续每个阶段只处理本计划列出的范围。阶段必须先写失败测试，再写最小实现，再运行指定测试/构建；验证失败不得进入下一阶段。每次实际修改都要在本文档底部追加实施日志。
 
-**目标：** 将当前项目整理为可由外部 Go 项目使用、可测试、可维护的 Redis 任务执行引擎，并按阶段提交推送到 `https://github.com/AndisWarm/Go-TaskEngine.git`。
+**目标：** 将当前项目整理为可由外部 Go 项目使用、可测试、可维护、可重复验证的 Redis 任务执行引擎，并按阶段提交推送到 `https://github.com/AndisWarm/Go-TaskEngine.git`；最终交付除代码外还包括可运行示例、真实 Redis 与故障验证、基准测试条件、自动化检查和面试展示材料，使项目能够作为通用 Go 后端求职中的基础设施项目。
 
 **架构：** `client/` 负责创建任务和入队，`server/` 负责调度和固定 worker，Redis 存放任务持久状态及原子状态转换，`examples/` 只提供可运行的模拟业务示例。需要公开给外部 Go 项目的模型、存储接口和 Redis 实现放在可导入的公开包中；定时器等内部机制保留在 `internal/`，各模块通过接口隔离。
 
@@ -17,6 +17,10 @@
 - 安全方案不在本计划中扩展；只保留运行所需的错误、配置和数据一致性处理。
 - 每个阶段完成后单独提交，提交信息包含阶段编号；提交前运行该阶段验证命令，提交后立即推送。
 - GitHub 已登录；推送前先验证远程地址和认证。代理先使用本机现有 Git 配置；若需显式代理，使用 `127.0.0.1:17897`，连接失败就停止推送并报告实际错误。
+- 当前仓库不创建网页、REST、gRPC 或独立网络管理服务；HTTP 业务能力由 `ImageProvenanceV2` 项目体现，TaskEngine 只提供可导入的库和命令行示例。
+- 以“可运行、可验证、可解释”为面试交付标准，不以继续增加功能数量为目标；每个对外宣称的能力都必须有对应代码、测试或可重复实验记录。
+- 不新增 DAG、Cron 平台、Kafka/RabbitMQ 适配、Kubernetes 部署、插件系统或强制接入 `ImageProvenanceV2`；这些内容不属于本次计划，避免两个面试项目被无关功能耦合。
+- 最终收口阶段必须补齐自动化检查、真实 Redis 验证、故障演示、启动说明和边界声明；没有实测证据的内容只能标记为 `PLANNED`、`PARTIAL` 或实验结果。
 
 ## 当前已核实状态
 
@@ -26,9 +30,8 @@
 - `client/` 已有 `NewTask`、`NewClient`、`Enqueue`、`EnqueueAt`、`EnqueueIn`，并支持队列、优先级、最大重试、超时、截止时间和延时选项。
 - `server/` 已有固定 worker、Redis claim、成功确认、失败重试、归档、lease、heartbeat、recovery、shutdown 和基础 metrics。
 - `internal/redisstore/` 已有任务 Hash、pending List、priority ZSet、scheduled/retry ZSet、active List、lease ZSet、archived ZSet 和对应 Lua 状态转换。
-- `internal/limiter/` 已有 Redis Lua Token Bucket，并接入 server 的领取路径；`internal/timer/` 已有本地时间优先队列原语，但尚未接入 server 主调度循环。
-- 当前没有前端、HTTP、REST、gRPC 或独立网络管理服务；示例是命令行程序。
-- 当前缺口包括：公开 API 依赖 `internal` 包；没有按任务类型路由；死信缺少列表、分页和手动重放；成功任务删除而不是保留完成记录；server 多处忽略 Redis 操作错误；示例 Redis 地址硬编码；真实 Redis 多实例压测和独立进程故障测试不足。
+- `internal/limiter/` 已有 Redis Lua Token Bucket，并接入 server 的领取路径；`internal/timer/` 已支持可注入时钟、并发 Schedule/Cancel 和慢回调语义，并已接入 server 的 dispatcher 唤醒流程。
+- 当前尚未完成的范围包括：完整重试退避与死信管理、真实 lease recovery 验证、双实例共享限流验证、独立进程故障测试、信号生命周期验收、示例配置收口、CI 和真实 Redis 压测报告。
 
 ## 阶段顺序与交付物
 
@@ -82,15 +85,15 @@
 
 ### 阶段 8：可配置的模拟示例和可观测性
 
-保留图像处理和 C2PA 签名模拟边界；把硬编码 Redis 地址改为环境变量或命令行参数；增加连通性检查、启动参数、失败/超时/不可重试示范和 Ctrl+C 说明；记录实际接入 server 的任务状态、耗时、成功、失败、重试和死信指标。
+保留图像处理和 C2PA 签名模拟边界；把硬编码 Redis 地址改为环境变量或命令行参数；增加 Redis 连通性检查、启动参数、producer/worker 角色说明、失败/超时/不可重试示范和 Ctrl+C 说明；提供一条可复制的最小演示路径：入队 → 延时或立即领取 → 成功、重试或死信 → 查询指标 → shutdown。示例不承担管理后台职责，不新增网页或独立 HTTP 服务；记录实际接入 server 的任务状态、耗时、成功、失败、重试和死信指标，并在 README 和运行手册中说明哪些结果来自模拟业务。
 
-验证：Redis 可用时分别运行 producer/worker 端到端流程，检查重试、死信和退出；`go test ./...`、`go build ./...`。未跑通的示例标为 `PARTIAL`；通过后提交 `feat(phase-8): make examples configurable and observable` 并推送。
+验证：Redis 可用时分别运行 producer/worker 端到端流程，检查重试、死信和退出；确认示例可从配置中切换 Redis 地址；`go test ./...`、`go build ./...`。未跑通的示例标为 `PARTIAL`；通过后提交 `feat(phase-8): make examples configurable and observable` 并推送。
 
 ### 阶段 9：真实 Redis 压测、故障测试和文档收口
 
-提供可重复的真实 Redis 测试入口；记录入队吞吐、延时误差分布、worker 并发上限、重试/死信吞吐、限流速率、shutdown 回收时间和故障恢复结果；写明 Redis 版本、CPU/内存、payload、并发数、持续时间和采样方法；区分 miniredis、本地真实 Redis 和多进程测试。
+提供可重复的真实 Redis 测试入口；记录入队吞吐、延时误差分布、worker 并发上限、重试/死信吞吐、限流速率、shutdown 回收时间和故障恢复结果；写明 Redis 版本、CPU/内存、payload、并发数、持续时间和采样方法；区分 miniredis、本地真实 Redis 和多进程测试；增加 CI 检查，至少自动执行 `go test ./...`、`go test -race ./...`、`go build ./...` 和 `go vet ./...`；提供 Docker Compose 或等价脚本启动 Redis，并整理从零开始的演示步骤、验证产物和项目边界声明。最终材料应能支持一次 3 分钟的面试演示，但不把实验结果描述为生产容量或生产可用性。
 
-验证：`go test ./...`、`go test -race ./...`、`go build ./...`、`go vet ./...`、全部示例验证和真实 Redis 验收清单。未完成项保持 `PARTIAL`；通过后提交 `docs(phase-9): close validation and release documentation` 并推送。
+验证：`go test ./...`、`go test -race ./...`、`go build ./...`、`go vet ./...`、全部示例验证、CI 验证和真实 Redis 验收清单。未完成项保持 `PARTIAL`；通过后提交 `docs(phase-9): close validation and release documentation` 并推送。
 
 ## 当前阶段状态
 
@@ -99,11 +102,25 @@
 - 阶段 2：`DONE` —— 成功确认保留 `completed` 任务记录和完成时间；无效状态转换返回明确错误；scheduled/retry 到期搬运使用 Lua 批量脚本，并通过并发搬运只成功一次测试。
 - 阶段 3：`DONE` —— 已增加按任务类型注册/路由的 `HandlerMux`，未知类型返回明确错误；服务端存储错误通过 `Config.ErrorHandler` 暴露，成功/重试/归档指标只在对应状态转换成功后记录；完整队列优先级顺序和 Redis 调度错误测试已通过。
 - 阶段 4：`DONE` —— `TimeWheel` 已支持可注入时钟、并发 Schedule/Cancel、慢回调串行语义和显式唤醒；dispatcher 使用本地定时器唤醒 Redis 到期扫描，Redis Lua 脚本负责持久状态搬运和重复消费保护；新增 500ms 跨秒、重启发现、双 dispatcher 和危险 heartbeat 配置测试；阶段测试、全量测试、构建和 vet 均通过。
-- 阶段 5：`PLANNED`
+- 阶段 5：`DONE` —— 已实现带抖动和上限的指数退避、不可重试和最大重试处理、死信分页查询/按 ID 查询/重放/删除/清理、heartbeat 和 recovery loop；新增 miniredis 状态测试及真实 Redis 独立进程 lease 故障恢复测试，阶段测试、全量测试、构建和 vet 均通过。
 - 阶段 6：`PLANNED`
 - 阶段 7：`PLANNED`
 - 阶段 8：`PLANNED`
 - 阶段 9：`PLANNED`
+
+## 面试项目最终验收标准
+
+完成阶段 9 前，不把项目描述为“高并发稳定”或“生产可用”；完成阶段 9 后，也只根据实际验证结果表述。最终至少满足以下条件：
+
+- **公开使用证据**：目录外临时 Go 模块能够导入 `model/`、`storage/`、`redisstore/`、`client/` 和 `server/`，并完成编译。
+- **核心功能证据**：能够现场或按文档演示立即任务、延时任务、多队列优先级、按类型路由、成功确认、重试和死信。
+- **可靠性证据**：能够展示 Redis Lua 原子状态转换、重复 claim 防护、lease 到期恢复、handler 超时或进程退出后的任务回收，以及至少一次执行语义。
+- **并发与限流证据**：有 `-race` 测试、固定 worker 并发上限测试，并有真实 Redis 下两个独立 server 共享 Token Bucket 的结果；没有真实数据的部分必须标记为 `PARTIAL`。
+- **工程化证据**：README、运行手册、示例配置、CI、真实 Redis 启动方式和 benchmark 报告能够互相对应；命令、配置、输出和文档中的版本与指标一致。
+- **讲解边界**：能够解释为什么选择 Redis 和 Lua、为什么采用至少一次而不是 exactly-once、为什么 Time Wheel 只负责本地唤醒、为什么 handler 需要幂等；能够主动说明没有管理后台、没有公有云部署和没有生产级容量结论。
+- **项目组合定位**：面试材料中将 `Go-TaskEngine` 定位为通用基础设施，将 `ImageProvenanceV2` 定位为复杂业务应用；除非两个仓库完成并验证真实集成，否则不声称项目一已经使用 TaskEngine。
+
+以上验收标准用于判断面试交付是否完成，不新增独立的大型项目，也不替代各阶段的代码级测试。
 
 ## 每阶段固定执行模板
 
@@ -127,8 +144,8 @@
 - `phase-5`：重试、死信和 Lease 恢复。
 - `phase-6`：Token Bucket 和双实例验证。
 - `phase-7`：Shutdown 与信号生命周期。
-- `phase-8`：模拟示例配置和 metrics。
-- `phase-9`：真实 Redis 压测、故障验收和文档收口。
+- `phase-8`：模拟示例配置、最小端到端演示和 metrics。
+- `phase-9`：真实 Redis 压测、故障验收、CI、启动方式、发布文档和面试验收材料。
 
 ## 实施日志
 
@@ -144,3 +161,6 @@
 - 2026-08-29 20:18（UTC+8）：阶段 4 先补充 `TimeWheel` 注入时钟、并发 Schedule/Cancel、慢回调语义、服务端危险 heartbeat 配置、500ms 跨秒延时、重启发现和双 dispatcher 竞争测试；预实现验证按计划先出现 `NewWithClock` 与 `ErrInvalidConfig` 未定义的编译失败。
 - 2026-08-29 20:19（UTC+8）：阶段 4 完成：`TimeWheel` 使用可注入时钟和串行回调，dispatcher 通过本地定时器唤醒到期扫描，`HeartbeatInterval >= LeaseDuration` 时 `Start` 返回 `ErrInvalidConfig`；修复定时器 goroutine 未计入 `WaitGroup` 导致 shutdown 超时的问题。`go test ./internal/timer ./server -race -timeout 45s -v`、`go test ./... -timeout 60s`、`go build ./...` 和 `go vet ./...` 均通过。跨秒延时连续 5 次实测误差约 1.4–6.3ms。Cursor 本地计划和元数据由根目录 `.gitignore` 的 `.cursor/` 规则忽略，未进入提交范围。
 - 2026-08-29 20:20（UTC+8）：阶段 4 提交 `5f30d13 feat(phase-4): integrate durable delayed dispatch scheduling` 已推送到 GitHub `main` 分支。
+- 2026-08-29 20:46（UTC+8）：根据通用 Go 后端求职目标重新审查执行计划：保留任务引擎核心范围，不新增管理后台、消息中间件适配、DAG 或强制接入 `ImageProvenanceV2`；总目标增加可运行、可验证、可解释和面试展示标准；阶段 8、阶段 9 增加最小端到端演示、真实 Redis 验证、CI、启动方式、故障证据和边界声明；新增最终面试项目验收标准。
+- 2026-08-29 21:04（UTC+8）：阶段 5 按测试驱动顺序新增指数退避抖动边界、不可重试、最大重试、死信分页/字段、死信重放、删除/清理、恢复循环和独立进程故障测试；预实现验证先确认死信接口、退避函数和配置字段未定义。
+- 2026-08-29 21:08（UTC+8）：阶段 5 完成：新增 `storage.DeadLetterStore` 公开接口及 Redis 原子死信查询、重放、删除和清理；`server.Config.RetryJitter` 接入退避计算并保留 `RetryMaxDelay` 上限；recovery loop 在 lease 恢复成功后记录重试/归档指标。默认 miniredis 测试和 `GTE_REAL_REDIS=1` 的 Redis 8.10.0 独立进程故障测试均通过；`go test ./server ./redisstore ./internal/redisstore -run 'Test.*Retry|Test.*Dead|Test.*Lease' -race`、`go test ./...`、`go test ./... -race`、`go build ./...` 和 `go vet ./...` 均通过。阶段 5 状态更新为 `DONE`。

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"os"
 	"sort"
 	"sync"
@@ -44,6 +45,7 @@ type Config struct {
 	ShutdownTimeout   time.Duration
 	RetryBaseDelay    time.Duration
 	RetryMaxDelay     time.Duration
+	RetryJitter       float64
 	HeartbeatInterval time.Duration
 	RecoveryInterval  time.Duration
 	TokenBucket       *limiter.TokenBucket
@@ -89,6 +91,9 @@ func (c *Config) applyDefaults() {
 func (c *Config) validate() error {
 	if c.HeartbeatInterval >= c.LeaseDuration {
 		return fmt.Errorf("%w: heartbeat interval %s must be less than lease duration %s", ErrInvalidConfig, c.HeartbeatInterval, c.LeaseDuration)
+	}
+	if c.RetryJitter < 0 || c.RetryJitter > 1 {
+		return fmt.Errorf("%w: retry jitter must be between 0 and 1: %f", ErrInvalidConfig, c.RetryJitter)
 	}
 	return nil
 }
@@ -329,7 +334,7 @@ func (s *Server) process(msg *model.TaskMessage) {
 		}
 		return
 	}
-	at := time.Now().Add(ExponentialBackoff(msg.RetryCount, s.cfg.RetryBaseDelay, s.cfg.RetryMaxDelay))
+	at := time.Now().Add(ExponentialBackoffWithJitter(msg.RetryCount, s.cfg.RetryBaseDelay, s.cfg.RetryMaxDelay, s.cfg.RetryJitter))
 	msg.RetryCount++
 	if retryErr := s.store.ScheduleRetry(context.Background(), msg, at, reason); retryErr != nil {
 		s.reportError(retryErr)
@@ -391,12 +396,16 @@ func (s *Server) recoveryLoop() {
 					if msg.RetryCount >= msg.MaxRetry {
 						if err := s.store.Archive(context.Background(), msg, "task lease expired"); err != nil {
 							s.reportError(err)
+						} else if s.cfg.Metrics != nil {
+							s.cfg.Metrics.RecordArchived()
 						}
 						continue
 					}
 					msg.RetryCount++
-					if err := s.store.ScheduleRetry(context.Background(), msg, now.Add(ExponentialBackoff(msg.RetryCount-1, s.cfg.RetryBaseDelay, s.cfg.RetryMaxDelay)), "task lease expired"); err != nil {
+					if err := s.store.ScheduleRetry(context.Background(), msg, now.Add(ExponentialBackoffWithJitter(msg.RetryCount-1, s.cfg.RetryBaseDelay, s.cfg.RetryMaxDelay, s.cfg.RetryJitter)), "task lease expired"); err != nil {
 						s.reportError(err)
+					} else if s.cfg.Metrics != nil {
+						s.cfg.Metrics.RecordRetried()
 					}
 				}
 			}
@@ -425,6 +434,29 @@ func ExponentialBackoff(retryCount int, base, max time.Duration) time.Duration {
 		return max
 	}
 	return result
+}
+
+func ExponentialBackoffWithJitter(retryCount int, base, max time.Duration, jitter float64) time.Duration {
+	delay := ExponentialBackoff(retryCount, base, max)
+	if jitter <= 0 {
+		return delay
+	}
+	if jitter > 1 {
+		jitter = 1
+	}
+	lower := float64(delay) * (1 - jitter)
+	upper := float64(delay) * (1 + jitter)
+	if upper > float64(max) {
+		upper = float64(max)
+	}
+	if upper <= lower {
+		return delay
+	}
+	result := lower + rand.Float64()*(upper-lower)
+	if result < float64(time.Nanosecond) {
+		result = float64(time.Nanosecond)
+	}
+	return time.Duration(result)
 }
 
 func (s *Server) trackActive(msg *model.TaskMessage) {

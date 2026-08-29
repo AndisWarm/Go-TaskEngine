@@ -8,7 +8,10 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go-taskengine/model"
 	"go-taskengine/redisstore"
+	"go-taskengine/storage"
 )
+
+var _ storage.DeadLetterStore = (*redisstore.Store)(nil)
 
 func TestPublicRedisStoreAcceptsPublicTaskModel(t *testing.T) {
 	mini := miniredis.RunT(t)
