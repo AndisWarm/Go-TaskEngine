@@ -105,7 +105,7 @@
 - 阶段 5：`DONE` —— 已实现带抖动和上限的指数退避、不可重试和最大重试处理、死信分页查询/按 ID 查询/重放/删除/清理、heartbeat 和 recovery loop；新增 miniredis 状态测试及真实 Redis 独立进程 lease 故障恢复测试，阶段测试、全量测试、构建和 vet 均通过。
 - 阶段 6：`DONE` —— 已将 Token Bucket 通过公开 `limiter` 包暴露，补充 scope 隔离、非有限令牌量和 server 配置校验；新增两个 server 共享同一 Redis bucket 的 miniredis 测试，并通过 `GTE_REAL_REDIS=1` 的真实 Redis 双实例测试；阶段 race、全量测试、构建和 vet 均通过。
 - 阶段 7：`DONE` —— 统一 `Start`、`Stop`、`Shutdown`、`Run`、`RunSignals` 的状态和 nil context 行为；`Shutdown` 按停止领取/转发、等待 handler/worker、停止维护循环的顺序执行，超时任务进入 requeue/recovery；新增重复启动/关闭、外部 Stop、nil context、信号、handler 取消和忽略 context 测试，阶段测试、全量测试、构建和 vet 均通过。
-- 阶段 8：`PLANNED`
+- 阶段 8：`DONE` —— 新增 `examples/support/` 共享配置与输出包；四个示例命令支持 `-redis-addr` 和 `TASKENGINE_REDIS_ADDR`，producer 支持延时、耗时、超时、失败、不可重试输入和最大重试参数，worker 启动先执行 Redis `PING` 并在退出时输出实际 `server.Metrics` 快照。已在 Redis 8.10.0 的隔离真实进程上验证立即成功、500ms 延时、失败重试后归档、超时归档、C2PA 不可重试归档、两个 worker 和自动 shutdown；`go test ./...`、`go test -race ./...`、`go build ./...` 和 `go vet ./...` 均通过。
 - 阶段 9：`PLANNED`
 
 ## 面试项目最终验收标准
@@ -171,3 +171,4 @@
 - 2026-08-29 21:47（UTC+8）：阶段 7 先补充重复 Start/Shutdown、Shutdown 后 Start、Run(nil)、Run context 取消、RunSignals context 取消、直接 Stop 和 handler 忽略 context 测试；预实现验证确认 `Run(nil)` 会因访问空 context 发生 panic。
 - 2026-08-29 21:54（UTC+8）：阶段 7 完成：handler 使用独立 context，`Shutdown` 分阶段等待 dispatcher/worker 后再停止 heartbeat、recovery 和本地 timer；`Run` 支持 nil context 并响应外部 Stop，`RunSignals` 支持外部 Stop 和 context 取消，超时继续执行 active 任务 requeue。`go test ./server -run 'Test.*Shutdown|Test.*Signal' -race`、`go test ./... -race`、`go build ./...`、`go vet ./...` 均通过。阶段 7 状态更新为 `DONE`。
 - 2026-08-29 21:58（UTC+8）：阶段 7 提交 `e2c43b9 feat(phase-7): finalize server lifecycle and shutdown semantics` 已推送到 GitHub `main` 分支。
+- 2026-08-29 22:45（UTC+8）：阶段 8 完成示例配置和可观测性改造：新增 `examples/support/` 共享 producer/worker 参数解析、Redis `PING` 连通性检查和 `server.Metrics` 快照格式化；四个命令移除直接硬编码 Redis 客户端，支持 `-redis-addr`、`TASKENGINE_REDIS_ADDR`、producer 的 `-delay`、`-duration`、`-timeout`、`-max-retry`、`-fail`，以及 C2PA 的 `-invalid`；worker 支持 `-run-for` 自动退出、Ctrl+C 和实际 metrics 输出。测试先因三个新 API 未定义而按预期编译失败，随后 support 测试通过。Redis 8.10.0 隔离真实进程端到端输出验证：图像 worker `processed=2 failed=2 retried=1 archived=1`（立即、500ms 延时和失败重试归档），C2PA worker `processed=1 failed=1 retried=0 archived=1`（成功和不可重试归档），超时场景 `processed=0 failed=1 retried=0 archived=1`；不可用 Redis 的 worker 启动 `PING` 失败并退出。`go test ./...`、`go test -race ./...`、`go build ./...` 和 `go vet ./...` 均通过，阶段 8 状态更新为 `DONE`。

@@ -7,19 +7,49 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/redis/go-redis/v9"
 	imageprocessing "go-taskengine/examples/image-processing"
+	"go-taskengine/examples/support"
 	"go-taskengine/redisstore"
 	"go-taskengine/server"
 )
 
 func main() {
-	rdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
+	if err := run(os.Args[1:]); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run(args []string) error {
+	config, err := support.ParseWorkerConfig("image-worker", args)
+	if err != nil {
+		return err
+	}
+	rdb, err := support.ConnectRedis(config.RedisAddr)
+	if err != nil {
+		return err
+	}
 	defer rdb.Close()
-	s := server.New(redisstore.New(rdb), imageprocessing.Handler{}, server.Config{Queues: map[string]int{"image": 1}})
+	log.Printf("Redis connected at %s; starting image simulation worker (Ctrl+C to stop)", config.RedisAddr)
+
+	metrics := server.NewMetrics()
+	s := server.New(redisstore.New(rdb), imageprocessing.Handler{}, server.Config{
+		Queues:  map[string]int{"image": 1},
+		Metrics: metrics,
+		ErrorHandler: func(err error) {
+			log.Printf("server error: %v", err)
+		},
+	})
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-	if err := s.RunSignals(context.Background(), signals); err != nil {
-		log.Print(err)
+	defer signal.Stop(signals)
+
+	ctx := context.Background()
+	if config.RunFor > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, config.RunFor)
+		defer cancel()
 	}
+	runErr := s.RunSignals(ctx, signals)
+	log.Printf("image worker %s", support.FormatMetrics(metrics.Snapshot()))
+	return runErr
 }

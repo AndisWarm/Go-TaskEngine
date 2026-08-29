@@ -1,16 +1,44 @@
 # 运行手册
 
-## 启动 Redis
+## 启动 Redis 和模拟示例
 
-本项目默认连接 `127.0.0.1:6379`。启动 Redis 后，可以分别运行示例目录下的 producer 和 worker：
+本项目示例默认连接 `127.0.0.1:6379`。可以通过环境变量统一配置，也可以给每个命令传入 `-redis-addr`；命令启动时会先执行 Redis `PING`，连接失败会立即退出并显示地址和错误。
 
 ```powershell
-go run ./examples/image-processing/cmd/worker
-go run ./examples/image-processing/cmd/producer
+$env:TASKENGINE_REDIS_ADDR = "127.0.0.1:6379"
 
-go run ./examples/c2pa-signing/cmd/worker
-go run ./examples/c2pa-signing/cmd/producer
+# 终端 1：启动 worker；Ctrl+C 停止并输出实际 metrics
+go run ./examples/image-processing/cmd/worker
+
+# 终端 2：入队立即任务、延时任务和可重试失败任务
+go run ./examples/image-processing/cmd/producer -duration 250ms
+go run ./examples/image-processing/cmd/producer -delay 1s -duration 100ms
+go run ./examples/image-processing/cmd/producer -fail -max-retry 2 -duration 10ms
+
+# C2PA 使用独立队列；invalid 是不可重试示范
+go run ./examples/c2pa-signing/cmd/worker -redis-addr 127.0.0.1:6379
+go run ./examples/c2pa-signing/cmd/producer -invalid
 ```
+
+所有 producer 都支持：
+
+- `-redis-addr`：Redis 地址，优先级高于 `TASKENGINE_REDIS_ADDR`。
+- `-delay`：入队后等待指定时间再变为 ready，例如 `1s`。
+- `-duration`：模拟业务处理耗时。
+- `-timeout`：任务 handler 超时时间；超时会走失败/重试路径。
+- `-max-retry`：最大重试次数。
+- `-fail`：模拟可重试业务失败。
+- C2PA producer 额外支持 `-invalid`，模拟不可重试输入错误并直接归档。
+
+所有 worker 都支持 `-redis-addr` 和 `-run-for`。例如 `go run ./examples/image-processing/cmd/worker -run-for 5s` 会在 5 秒后自动执行 shutdown 并输出 metrics，适合自动化演示；没有 `-run-for` 时使用 Ctrl+C。
+
+worker 输出的 `metrics` 来自传给 `server.Config.Metrics` 的 `server.Metrics` 快照，格式为：
+
+```text
+metrics processed=1 failed=0 retried=0 archived=0 total_duration=250ms
+```
+
+这里的 `failed`、`retried` 和 `archived` 是服务端实际完成相应状态转换后记录的计数；模拟 handler 的处理结果不代表真实图像或 C2PA 业务集成。
 
 - `Stop` 是非阻塞停止请求：停止领取新任务并取消 active handler；调用方需要使用 `Shutdown` 等待 worker 和维护循环完成。
 - `Shutdown` 的顺序是停止领取和转发、取消并等待 handler/worker，再停止 heartbeat、recovery 和本地 timer。超过 `ShutdownTimeout` 时，将当前 active 任务执行 requeue 并返回超时错误。
