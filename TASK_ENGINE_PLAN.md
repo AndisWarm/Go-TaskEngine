@@ -170,3 +170,4 @@
 - 2026-08-29 21:35（UTC+8）：阶段 6 提交 `53bdbeb feat(phase-6): verify distributed token bucket scheduling limits` 已推送到 GitHub `main` 分支。
 - 2026-08-29 21:47（UTC+8）：阶段 7 先补充重复 Start/Shutdown、Shutdown 后 Start、Run(nil)、Run context 取消、RunSignals context 取消、直接 Stop 和 handler 忽略 context 测试；预实现验证确认 `Run(nil)` 会因访问空 context 发生 panic。
 - 2026-08-29 21:54（UTC+8）：阶段 7 完成：handler 使用独立 context，`Shutdown` 分阶段等待 dispatcher/worker 后再停止 heartbeat、recovery 和本地 timer；`Run` 支持 nil context 并响应外部 Stop，`RunSignals` 支持外部 Stop 和 context 取消，超时继续执行 active 任务 requeue。`go test ./server -run 'Test.*Shutdown|Test.*Signal' -race`、`go test ./... -race`、`go build ./...`、`go vet ./...` 均通过。阶段 7 状态更新为 `DONE`。
+- 2026-08-29 21:58（UTC+8）：阶段 7 提交 `e2c43b9 feat(phase-7): finalize server lifecycle and shutdown semantics` 已推送到 GitHub `main` 分支。
