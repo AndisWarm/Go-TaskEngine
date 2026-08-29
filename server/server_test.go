@@ -2,17 +2,19 @@ package server
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
 	"go-taskengine/client"
 	"go-taskengine/internal/limiter"
 	"go-taskengine/internal/redisstore"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 func testServer(t *testing.T, handler Handler, cfg Config) (*Server, *client.Client) {
@@ -105,6 +107,16 @@ func TestServerProcessesHigherPriorityQueueFirst(t *testing.T) {
 	}
 }
 
+func TestServerRejectsUnsafeHeartbeatInterval(t *testing.T) {
+	s, _ := testServer(t, HandlerFunc(func(context.Context, *TaskMessage) error { return nil }), Config{
+		LeaseDuration:     time.Second,
+		HeartbeatInterval: time.Second,
+	})
+	if err := s.Start(); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("Start error = %v, want ErrInvalidConfig", err)
+	}
+}
+
 func TestServerForwardsMillisecondDelayedTask(t *testing.T) {
 	started := make(chan time.Time, 1)
 	handler := HandlerFunc(func(_ context.Context, _ *TaskMessage) error { started <- time.Now(); return nil })
@@ -126,6 +138,101 @@ func TestServerForwardsMillisecondDelayedTask(t *testing.T) {
 	}
 	if err := s.Shutdown(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestServerForwards500msDelayedTaskAcrossSecondBoundary(t *testing.T) {
+	started := make(chan time.Time, 1)
+	handler := HandlerFunc(func(_ context.Context, _ *TaskMessage) error { started <- time.Now(); return nil })
+	s, producer := testServer(t, handler, Config{Concurrency: 1, PollInterval: 5 * time.Millisecond})
+	before := time.Now()
+	at := before.Truncate(time.Second).Add(time.Second + 500*time.Millisecond)
+	if _, err := producer.EnqueueAt(context.Background(), client.NewTask("boundary", nil), at, client.WithTaskID("boundary-1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case ranAt := <-started:
+		delay := ranAt.Sub(before)
+		t.Logf("500ms cross-second delayed task ran after %s (target was %s)", delay, at.Sub(before))
+		if ranAt.Before(at) {
+			t.Fatalf("task ran before scheduled time: %s early", at.Sub(ranAt))
+		}
+		if delay > 2*time.Second {
+			t.Fatalf("task ran too late: %s", delay)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("cross-second delayed task did not run")
+	}
+	if err := s.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRestartedServerDiscoversDelayedTask(t *testing.T) {
+	mini := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mini.Addr()})
+	defer rdb.Close()
+	store := redisstore.New(rdb)
+	producer := client.NewClient(store)
+	if _, err := producer.EnqueueIn(context.Background(), client.NewTask("restart", nil), 60*time.Millisecond, client.WithTaskID("restart-1")); err != nil {
+		t.Fatal(err)
+	}
+	first := New(store, HandlerFunc(func(context.Context, *TaskMessage) error { return nil }), Config{PollInterval: time.Millisecond})
+	if err := first.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(80 * time.Millisecond)
+	var processed atomic.Int32
+	second := New(store, HandlerFunc(func(context.Context, *TaskMessage) error {
+		processed.Add(1)
+		return nil
+	}), Config{PollInterval: time.Millisecond})
+	if err := second.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, time.Second, func() bool { return processed.Load() == 1 })
+	if err := second.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTwoDispatchersDoNotDuplicateDelayedTask(t *testing.T) {
+	mini := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mini.Addr()})
+	defer rdb.Close()
+	store := redisstore.New(rdb)
+	producer := client.NewClient(store)
+	var processed atomic.Int32
+	handler := HandlerFunc(func(_ context.Context, _ *TaskMessage) error {
+		processed.Add(1)
+		return nil
+	})
+	first := New(store, handler, Config{Concurrency: 1, PollInterval: time.Millisecond})
+	second := New(store, handler, Config{Concurrency: 1, PollInterval: time.Millisecond})
+	if _, err := producer.EnqueueIn(context.Background(), client.NewTask("once", nil), 50*time.Millisecond, client.WithTaskID("once-1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, time.Second, func() bool { return processed.Load() == 1 })
+	if err := first.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+	if got := processed.Load(); got != 1 {
+		t.Fatalf("processed task count = %d, want 1", got)
 	}
 }
 

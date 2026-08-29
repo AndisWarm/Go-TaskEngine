@@ -98,7 +98,7 @@
 - 阶段 1：`DONE` —— 已新增公开 `model/`、`storage/`、`redisstore/` 包边界，server/client/examples 已切换到公开类型；新增模型超时校验、客户端精确延时、负延时和取消上下文测试；目录外临时 Go 模块导入公开 API 编译通过。
 - 阶段 2：`DONE` —— 成功确认保留 `completed` 任务记录和完成时间；无效状态转换返回明确错误；scheduled/retry 到期搬运使用 Lua 批量脚本，并通过并发搬运只成功一次测试。
 - 阶段 3：`DONE` —— 已增加按任务类型注册/路由的 `HandlerMux`，未知类型返回明确错误；服务端存储错误通过 `Config.ErrorHandler` 暴露，成功/重试/归档指标只在对应状态转换成功后记录；完整队列优先级顺序和 Redis 调度错误测试已通过。
-- 阶段 4：`PLANNED`
+- 阶段 4：`DONE` —— `TimeWheel` 已支持可注入时钟、并发 Schedule/Cancel、慢回调串行语义和显式唤醒；dispatcher 使用本地定时器唤醒 Redis 到期扫描，Redis Lua 脚本负责持久状态搬运和重复消费保护；新增 500ms 跨秒、重启发现、双 dispatcher 和危险 heartbeat 配置测试；阶段测试、全量测试、构建和 vet 均通过。
 - 阶段 5：`PLANNED`
 - 阶段 6：`PLANNED`
 - 阶段 7：`PLANNED`
@@ -139,4 +139,7 @@
 - 2026-08-29 16:27（UTC+8）：阶段 1 完成公开包边界改造：新增 `model/model.go`、`storage/storage.go`、`redisstore/redisstore.go`；`internal/model` 改为公开模型兼容别名；client、server 和示例使用公开包，server.New 接收 `storage.TaskStore`。新增模型负超时校验、客户端 `EnqueueAt`、负 `EnqueueIn` 和取消上下文测试；目录外临时模块导入公开 API 编译通过。验证命令 `go test -race ./...`、`go build ./...`、`go vet ./...` 均通过。阶段 1 状态为 `DONE`，提交和推送尚未完成。
 - 2026-08-29 16:29（UTC+8）：阶段 1 提交已修正并推送：`40024c7 feat(phase-1): expose stable client and storage APIs`；工作区未包含未提交文件。
 - 2026-08-29 16:41（UTC+8）：阶段 2 完成 Redis 状态机增强：成功确认保留任务 Hash、写入 `completed` 状态和 `completed_at`；Ack/Retry/Archive/Requeue 的 Lua 返回 0 时返回 `ErrInvalidTransition`；到期 scheduled/retry 任务改用 Lua 批量搬运；新增完成记录、无效转换和并发搬运测试，并更新状态机文档。验证命令 `go test -race ./...`、`go build ./...`、`go vet ./...` 均通过。阶段 2 状态为 `DONE`，提交和推送尚未完成。
-- 2026-08-29 17:14（UTC+8）：阶段 2 提交 `547d5eb feat(phase-2): harden atomic Redis task state transitions` 已推送到 GitHub `main`。阶段 3 完成 `HandlerMux` 任务类型路由、未知类型错误、`Config.ErrorHandler` 存储错误回调、状态转换成功后 metrics 记录和完整队列优先级测试；阶段验证 `go test ./server`、`go test -race ./server`、`go build ./...`、`go vet ./...` 均通过。阶段 3 状态为 `DONE`，提交和推送尚未完成。
+- 2026-08-29 17:14（UTC+8）：阶段 2 提交 `547d5eb feat(phase-2): harden atomic Redis task state transitions` 已推送到 GitHub `main`。阶段 3 完成 `HandlerMux` 任务类型路由、未知类型错误、`Config.ErrorHandler` 存储错误回调、状态转换成功后 metrics 记录和完整队列优先级测试；阶段验证 `go test ./server`、`go test -race ./server`、`go build ./...`、`go vet ./...` 均通过。阶段 3 状态为 `DONE`，提交 `5700e35` 已推送到 GitHub `main` 分支。
+- 2026-08-29 20:08（UTC+8）：阶段 3 提交 `5700e35 feat(phase-3): add routed handlers and observable worker errors` 已推送到 GitHub `main` 分支。推送后确认 Cursor 本地计划文件位于 `.cursor/plans/`，根目录 `.gitignore` 已加入 `.cursor/` 规则；该本地元数据保持忽略，不进入后续 Git 提交。
+- 2026-08-29 20:18（UTC+8）：阶段 4 先补充 `TimeWheel` 注入时钟、并发 Schedule/Cancel、慢回调语义、服务端危险 heartbeat 配置、500ms 跨秒延时、重启发现和双 dispatcher 竞争测试；预实现验证按计划先出现 `NewWithClock` 与 `ErrInvalidConfig` 未定义的编译失败。
+- 2026-08-29 20:19（UTC+8）：阶段 4 完成：`TimeWheel` 使用可注入时钟和串行回调，dispatcher 通过本地定时器唤醒到期扫描，`HeartbeatInterval >= LeaseDuration` 时 `Start` 返回 `ErrInvalidConfig`；修复定时器 goroutine 未计入 `WaitGroup` 导致 shutdown 超时的问题。`go test ./internal/timer ./server -race -timeout 45s -v`、`go test ./... -timeout 60s`、`go build ./...` 和 `go vet ./...` 均通过。跨秒延时连续 5 次实测误差约 1.4–6.3ms。Cursor 本地计划和元数据由根目录 `.gitignore` 的 `.cursor/` 规则忽略，未进入提交范围。

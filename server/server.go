@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go-taskengine/internal/limiter"
+	localtimer "go-taskengine/internal/timer"
 	"go-taskengine/model"
 	"go-taskengine/redisstore"
 	"go-taskengine/storage"
@@ -32,6 +33,7 @@ func (f HandlerFunc) ProcessTask(ctx context.Context, msg *TaskMessage) error { 
 var ErrNonRetryable = errors.New("non-retryable task failure")
 var ErrServerClosed = errors.New("server is closed")
 var ErrServerRunning = errors.New("server is already running")
+var ErrInvalidConfig = errors.New("invalid server configuration")
 
 // Config controls the server worker pool and lifecycle.
 type Config struct {
@@ -84,6 +86,13 @@ func (c *Config) applyDefaults() {
 	}
 }
 
+func (c *Config) validate() error {
+	if c.HeartbeatInterval >= c.LeaseDuration {
+		return fmt.Errorf("%w: heartbeat interval %s must be less than lease duration %s", ErrInvalidConfig, c.HeartbeatInterval, c.LeaseDuration)
+	}
+	return nil
+}
+
 // Server runs a fixed-size worker pool over a Redis-backed queue.
 type Server struct {
 	store   storage.TaskStore
@@ -91,14 +100,16 @@ type Server struct {
 	cfg     Config
 	queues  []string
 
-	mu      sync.Mutex
-	state   serverState
-	stopCh  chan struct{}
-	stopOne sync.Once
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
-	active  map[string]*model.TaskMessage
+	mu           sync.Mutex
+	state        serverState
+	stopCh       chan struct{}
+	stopOne      sync.Once
+	ctx          context.Context
+	cancel       context.CancelFunc
+	wheel        *localtimer.TimeWheel
+	dispatchWake chan struct{}
+	wg           sync.WaitGroup
+	active       map[string]*model.TaskMessage
 }
 
 type serverState uint8
@@ -133,13 +144,23 @@ func (s *Server) Start() error {
 	if s.state == stateStopped {
 		return ErrServerClosed
 	}
+	if err := s.cfg.validate(); err != nil {
+		return err
+	}
 	if s.store == nil || s.handler == nil {
 		return errors.New("server store and handler are required")
 	}
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.stopCh = make(chan struct{})
+	s.dispatchWake = make(chan struct{}, 1)
+	s.wheel = localtimer.New()
 	s.state = stateRunning
 	jobs := make(chan *model.TaskMessage)
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.wheel.Run(s.ctx)
+	}()
 	s.wg.Add(1)
 	go s.dispatch(jobs)
 	for i := 0; i < s.cfg.Concurrency; i++ {
@@ -238,14 +259,21 @@ func (s *Server) dispatch(jobs chan<- *model.TaskMessage) {
 	}
 }
 
+func (s *Server) wakeDispatcher() {
+	select {
+	case s.dispatchWake <- struct{}{}:
+	default:
+	}
+}
+
 func (s *Server) waitOrStop(duration time.Duration) bool {
 	if duration <= 0 {
 		duration = time.Millisecond
 	}
-	timer := time.NewTimer(duration)
-	defer timer.Stop()
+	cancel := s.wheel.Schedule(time.Now().Add(duration), s.wakeDispatcher)
+	defer cancel()
 	select {
-	case <-timer.C:
+	case <-s.dispatchWake:
 		return true
 	case <-s.stopCh:
 		return false

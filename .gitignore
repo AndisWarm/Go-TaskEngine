@@ -21,4 +21,5 @@ coverage.html
 .idea/
 *.iml
 .DS_Store
-Thumbs.db
+# Cursor local metadata and plans.
+.cursor/
