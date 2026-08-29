@@ -164,3 +164,4 @@
 - 2026-08-29 20:46（UTC+8）：根据通用 Go 后端求职目标重新审查执行计划：保留任务引擎核心范围，不新增管理后台、消息中间件适配、DAG 或强制接入 `ImageProvenanceV2`；总目标增加可运行、可验证、可解释和面试展示标准；阶段 8、阶段 9 增加最小端到端演示、真实 Redis 验证、CI、启动方式、故障证据和边界声明；新增最终面试项目验收标准。
 - 2026-08-29 21:04（UTC+8）：阶段 5 按测试驱动顺序新增指数退避抖动边界、不可重试、最大重试、死信分页/字段、死信重放、删除/清理、恢复循环和独立进程故障测试；预实现验证先确认死信接口、退避函数和配置字段未定义。
 - 2026-08-29 21:08（UTC+8）：阶段 5 完成：新增 `storage.DeadLetterStore` 公开接口及 Redis 原子死信查询、重放、删除和清理；`server.Config.RetryJitter` 接入退避计算并保留 `RetryMaxDelay` 上限；recovery loop 在 lease 恢复成功后记录重试/归档指标。默认 miniredis 测试和 `GTE_REAL_REDIS=1` 的 Redis 8.10.0 独立进程故障测试均通过；`go test ./server ./redisstore ./internal/redisstore -run 'Test.*Retry|Test.*Dead|Test.*Lease' -race`、`go test ./...`、`go test ./... -race`、`go build ./...` 和 `go vet ./...` 均通过。阶段 5 状态更新为 `DONE`。
+- 2026-08-29 21:12（UTC+8）：阶段 5 提交 `e04274d feat(phase-5): complete retry dead-letter and lease recovery` 已推送到 GitHub `main` 分支。
