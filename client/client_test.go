@@ -84,3 +84,37 @@ func TestInvalidOptionsAreRejected(t *testing.T) {
 		t.Fatal("negative delay was accepted")
 	}
 }
+
+func TestEnqueueAtRoutesAtExactTime(t *testing.T) {
+	store := new(recordingStore)
+	c := NewClient(store)
+	c.now = func() time.Time { return time.UnixMilli(1000) }
+	at := time.UnixMilli(2500)
+	msg, err := c.EnqueueAt(context.Background(), NewTask("scheduled", nil), at, WithTaskID("at-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.schedule) != 1 || msg.RunAt.UnixMilli() != at.UnixMilli() {
+		t.Fatalf("scheduled message = %+v", msg)
+	}
+}
+
+func TestEnqueueInRejectsNegativeDelay(t *testing.T) {
+	c := NewClient(new(recordingStore))
+	if _, err := c.EnqueueIn(context.Background(), NewTask("x", nil), -time.Millisecond); err == nil {
+		t.Fatal("negative EnqueueIn delay was accepted")
+	}
+}
+
+func TestEnqueueRejectsCanceledContextBeforeGeneratingTask(t *testing.T) {
+	store := new(recordingStore)
+	c := NewClient(store)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := c.Enqueue(ctx, NewTask("x", nil)); err == nil {
+		t.Fatal("canceled context was accepted")
+	}
+	if len(store.queued) != 0 || len(store.schedule) != 0 {
+		t.Fatal("canceled enqueue reached the store")
+	}
+}

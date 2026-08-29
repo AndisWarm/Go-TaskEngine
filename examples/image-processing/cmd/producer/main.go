@@ -8,7 +8,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go-taskengine/client"
 	imageprocessing "go-taskengine/examples/image-processing"
-	"go-taskengine/internal/redisstore"
+	"go-taskengine/redisstore"
 )
 
 func main() {

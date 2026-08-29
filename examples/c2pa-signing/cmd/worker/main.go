@@ -9,7 +9,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	c2pasigning "go-taskengine/examples/c2pa-signing"
-	"go-taskengine/internal/redisstore"
+	"go-taskengine/redisstore"
 	"go-taskengine/server"
 )
 

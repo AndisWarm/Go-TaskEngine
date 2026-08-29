@@ -10,8 +10,9 @@ import (
 	"time"
 
 	"go-taskengine/internal/limiter"
-	"go-taskengine/internal/model"
-	"go-taskengine/internal/redisstore"
+	"go-taskengine/model"
+	"go-taskengine/redisstore"
+	"go-taskengine/storage"
 )
 
 // TaskMessage is the task envelope delivered to handlers.
@@ -83,7 +84,7 @@ func (c *Config) applyDefaults() {
 
 // Server runs a fixed-size worker pool over a Redis-backed queue.
 type Server struct {
-	store   *redisstore.Store
+	store   storage.TaskStore
 	handler Handler
 	cfg     Config
 	queues  []string
@@ -106,7 +107,7 @@ const (
 	stateStopped
 )
 
-func New(store *redisstore.Store, handler Handler, cfg Config) *Server {
+func New(store storage.TaskStore, handler Handler, cfg Config) *Server {
 	cfg.applyDefaults()
 	queues := make([]string, 0, len(cfg.Queues))
 	for queue, priority := range cfg.Queues {

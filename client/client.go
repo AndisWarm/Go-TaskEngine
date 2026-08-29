@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"go-taskengine/internal/model"
+	"go-taskengine/model"
 )
 
 const (
@@ -157,6 +157,9 @@ func (c *Client) Enqueue(ctx context.Context, task *Task, opts ...Option) (*mode
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("enqueue context: %w", err)
+	}
 	now := c.now()
 	id, err := c.newID()
 	if err != nil {
@@ -205,7 +208,7 @@ func (c *Client) EnqueueAt(ctx context.Context, task *Task, at time.Time, opts .
 }
 
 func (c *Client) EnqueueIn(ctx context.Context, task *Task, delay time.Duration, opts ...Option) (*model.TaskMessage, error) {
-	return c.Enqueue(ctx, task, append([]Option{ProcessAt(c.now().Add(delay))}, opts...)...)
+	return c.Enqueue(ctx, task, append([]Option{ProcessIn(delay)}, opts...)...)
 }
 
 func randomID() (string, error) {

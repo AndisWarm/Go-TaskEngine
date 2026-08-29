@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"go-taskengine/internal/model"
+	"go-taskengine/model"
 )
 
 const keyPrefix = "gte:"

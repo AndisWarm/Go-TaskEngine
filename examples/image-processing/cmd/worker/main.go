@@ -9,7 +9,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	imageprocessing "go-taskengine/examples/image-processing"
-	"go-taskengine/internal/redisstore"
+	"go-taskengine/redisstore"
 	"go-taskengine/server"
 )
 
