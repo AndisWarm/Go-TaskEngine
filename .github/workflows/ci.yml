@@ -1,5 +1,8 @@
 name: Go TaskEngine CI
 
+env:
+  GITHUB_TOKEN: ${{ secrets.MY_PAT }}
+
 on:
   push:
     branches: [main]

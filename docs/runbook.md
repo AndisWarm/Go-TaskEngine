@@ -75,7 +75,7 @@ metrics processed=1 failed=0 retried=0 archived=0 total_duration=250ms
 
 ## 3. 真实 Redis 验收
 
-阶段 9 的真实 Redis 测试默认跳过，设置 `GTE_REAL_REDIS=1` 后执行：
+阶段 9 的真实 Redis 测试默认跳过，设置 `GTE_REAL_REDIS=1` 后执行。测试结果已经记录在 `docs/benchmark-report.md`：
 
 ```powershell
 $env:GTE_REAL_REDIS = "1"
@@ -109,3 +109,7 @@ go vet ./...
 ```
 
 GitHub Actions 配置位于 `.github/workflows/ci.yml`，执行相同的测试、race、构建和 vet 检查。CI 的 Redis 服务用于连通性环境，不代表生产部署方案。
+
+## 6. 发布状态
+
+阶段 9 的代码、测试、脚本、CI 配置和文档已推送到 GitHub 远程 `main`。GitHub Actions 工作流位于 `.github/workflows/ci.yml`，会执行测试、race、构建和 vet 检查。

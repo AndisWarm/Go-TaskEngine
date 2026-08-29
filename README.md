@@ -2,7 +2,14 @@
 
 Go-TaskEngine 是一个基于 Redis 的 Go 任务执行引擎。它提供客户端任务入队、服务端固定数量 worker、延时任务、失败重试、租约恢复、令牌桶限流和命令行示例。
 
-当前仓库的目标是先完成可测试的 Go 核心库，再按阶段补齐公开 API、故障验证和真实 Redis 压测。项目不包含网页管理端或 HTTP 管理接口。
+当前仓库已经完成任务引擎核心能力、阶段 8 示例改造和阶段 9 真实 Redis 验收。阶段 9 的 benchmark、故障测试、启动脚本、GitHub Actions CI 和收口文档已完成并推送。项目不包含网页管理端或 HTTP 管理接口，也不根据小规模测试宣称生产容量。
+
+## 当前交付状态
+
+- 阶段 0–9：`DONE`。核心 API、Redis 状态机、服务端调度、重试死信、限流、生命周期、示例、真实 Redis 验收、benchmark、故障测试和 CI 已实现并验证。
+- 生产级容量结论：未提供。未进行长时间、多客户端、多进程、跨主机压测，不宣称高并发稳定或生产可用。
+
+阶段 9 的提交已同步到 GitHub 远程 `main`。完整过程、实测数值和边界记录在 [`TASK_ENGINE_PLAN.md`](TASK_ENGINE_PLAN.md) 与 [`docs/benchmark-report.md`](docs/benchmark-report.md)。
 
 ## 目录
 
@@ -32,7 +39,7 @@ go vet ./...
 
 阶段 9 提供真实 Redis benchmark、功能验收测试、Windows PowerShell Redis 启停脚本和 GitHub Actions CI；所有实测条件与边界见 [`docs/benchmark-report.md`](docs/benchmark-report.md)。
 
-## 阶段 8 最小演示
+## 最小演示
 
 先启动 Redis，然后在两个终端分别运行 worker 和 producer。worker 启动时会先执行 Redis `PING`；收到 Ctrl+C 后会输出实际接入服务端 worker 路径的处理、失败、重试、死信和耗时指标。
 
@@ -59,7 +66,12 @@ go run ./examples/c2pa-signing/cmd/producer -invalid
 
 四个命令都支持 `-redis-addr`；未指定时读取 `TASKENGINE_REDIS_ADDR`，再回退到 `127.0.0.1:6379`。producer 还支持 `-delay`、`-duration`、`-timeout`、`-max-retry`、`-fail` 和 C2PA 专用的 `-invalid`。worker 支持 `-run-for 5s` 自动停止，适合无交互演示；默认不设置时使用 Ctrl+C 停止。
 
-## 参考项目
+## 文档
+
+- [`docs/architecture.md`](docs/architecture.md)：架构、运行语义和配置。
+- [`docs/redis-state-machine.md`](docs/redis-state-machine.md)：Redis key 和 Lua 状态转换。
+- [`docs/runbook.md`](docs/runbook.md)：启动、示例、真实 Redis 验收和故障语义。
+- [`docs/benchmark-report.md`](docs/benchmark-report.md)：benchmark、真实 Redis 结果和未测量项。
 
 `asynq-master` 和 `asynq-master.zip` 是本地参考资料，不属于 Go-TaskEngine，不会被修改或提交到 GitHub。
 

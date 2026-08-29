@@ -49,6 +49,7 @@ flowchart LR
 - `GTE_REAL_REDIS=1` 的测试连接本机真实 Redis，验证 Redis 协议、进程和网络边界；它们不提供生产容量结论。
 - `TimeWheel` 只负责本地 dispatcher 唤醒，scheduled/retry 状态仍持久化在 Redis。
 - 真实 Redis 的 benchmark 与功能验收命令、机器条件和采样限制记录在 `docs/benchmark-report.md`。
+- 阶段 9 的 CI 工作流位于 `.github/workflows/ci.yml`；已推送到 GitHub 远程 `main`，会执行测试、race、构建和 vet 检查。
 
 ## 阶段 4 延时调度验证
 

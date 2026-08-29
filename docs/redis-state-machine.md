@@ -12,7 +12,9 @@
 - `active`：执行中的任务 List。
 - `lease`：执行中任务的租约到期 ZSet。
 - `archived`：死信/失败归档 ZSet，score 为归档时间的 Unix 毫秒时间戳。
-- 已成功的任务保留在原任务 Hash 中，状态变为 `completed`，并写入 `completed_at`；当前没有单独的 completed ZSet。
+- 已成功确认的任务保留在任务 Hash 中，状态为 `completed`，并写入 `completed_at`；当前没有单独的 `completed` ZSet。失败任务进入 `retry` 或 `archived`，并由 server metrics 记录实际成功的状态转换。
+- `GTE_REAL_REDIS=1` 的真实 Redis 测试和阶段 9 验收结果见 [`benchmark-report.md`](benchmark-report.md)；阶段 9 的 CI 工作流已发布到 GitHub 远程 `main`。
+
 ## 状态转换
 
 ```mermaid

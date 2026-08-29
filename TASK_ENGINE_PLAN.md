@@ -31,7 +31,7 @@
 - `server/` 已有固定 worker、Redis claim、成功确认、失败重试、归档、lease、heartbeat、recovery、shutdown 和基础 metrics。
 - `internal/redisstore/` 已有任务 Hash、pending List、priority ZSet、scheduled/retry ZSet、active List、lease ZSet、archived ZSet 和对应 Lua 状态转换。
 - `internal/limiter/` 已有 Redis Lua Token Bucket，并接入 server 的领取路径；`internal/timer/` 已支持可注入时钟、并发 Schedule/Cancel 和慢回调语义，并已接入 server 的 dispatcher 唤醒流程。
-- 当前尚未完成的范围包括：完整重试退避与死信管理、真实 lease recovery 验证、双实例共享限流验证、独立进程故障测试、信号生命周期验收、示例配置收口、CI 和真实 Redis 压测报告。
+- `go-taskengine` 当前已完成阶段 0–9 的核心功能、示例、真实 Redis 验收、benchmark、故障测试、CI 配置和文档，阶段 9 已推送到 GitHub 远程 `main`。未进行的长时间多进程、多客户端、跨主机压测指标仍不作为生产容量结论。
 
 ## 阶段顺序与交付物
 
@@ -106,7 +106,7 @@
 - 阶段 6：`DONE` —— 已将 Token Bucket 通过公开 `limiter` 包暴露，补充 scope 隔离、非有限令牌量和 server 配置校验；新增两个 server 共享同一 Redis bucket 的 miniredis 测试，并通过 `GTE_REAL_REDIS=1` 的真实 Redis 双实例测试；阶段 race、全量测试、构建和 vet 均通过。
 - 阶段 7：`DONE` —— 统一 `Start`、`Stop`、`Shutdown`、`Run`、`RunSignals` 的状态和 nil context 行为；`Shutdown` 按停止领取/转发、等待 handler/worker、停止维护循环的顺序执行，超时任务进入 requeue/recovery；新增重复启动/关闭、外部 Stop、nil context、信号、handler 取消和忽略 context 测试，阶段测试、全量测试、构建和 vet 均通过。
 - 阶段 8：`DONE` —— 新增 `examples/support/` 共享配置与输出包；四个示例命令支持 `-redis-addr` 和 `TASKENGINE_REDIS_ADDR`，producer 支持延时、耗时、超时、失败、不可重试输入和最大重试参数，worker 启动先执行 Redis `PING` 并在退出时输出实际 `server.Metrics` 快照。已在 Redis 8.10.0 的隔离真实进程上验证立即成功、500ms 延时、失败重试后归档、超时归档、C2PA 不可重试归档、两个 worker 和自动 shutdown；`go test ./...`、`go test -race ./...`、`go build ./...` 和 `go vet ./...` 均通过。
-- 阶段 9：`PARTIAL` —— 本地已新增真实 Redis benchmark、功能验收测试、Windows PowerShell Redis 隔离启停脚本、GitHub Actions CI 和收口文档；真实 Redis 与全量本地验证均已通过，但 GitHub 拒绝当前 OAuth 应用更新 `.github/workflows/ci.yml`（缺少 `workflow` scope），因此阶段 9 提交尚未成功推送，远程仍停留在阶段 8。
+- 阶段 9：`DONE` —— 新增真实 Redis benchmark、功能验收测试、Windows PowerShell Redis 隔离启停脚本、GitHub Actions CI 和收口文档；真实 Redis 与全量本地验证均已通过，CI 工作流已推送到 GitHub 远程 `main`。长时间、多客户端、多进程、P95/P99、CPU/内存和跨主机网络指标未测量，仍不形成生产容量结论。
 
 ## 面试项目最终验收标准
 
@@ -173,5 +173,6 @@
 - 2026-08-29 21:58（UTC+8）：阶段 7 提交 `e2c43b9 feat(phase-7): finalize server lifecycle and shutdown semantics` 已推送到 GitHub `main` 分支。
 - 2026-08-29 22:45（UTC+8）：阶段 8 完成示例配置和可观测性改造：新增 `examples/support/` 共享 producer/worker 参数解析、Redis `PING` 连通性检查和 `server.Metrics` 快照格式化；四个命令移除直接硬编码 Redis 客户端，支持 `-redis-addr`、`TASKENGINE_REDIS_ADDR`、producer 的 `-delay`、`-duration`、`-timeout`、`-max-retry`、`-fail`，以及 C2PA 的 `-invalid`；worker 支持 `-run-for` 自动退出、Ctrl+C 和实际 metrics 输出。测试先因三个新 API 未定义而按预期编译失败，随后 support 测试通过。Redis 8.10.0 隔离真实进程端到端输出验证：图像 worker `processed=2 failed=2 retried=1 archived=1`（立即、500ms 延时和失败重试归档），C2PA worker `processed=1 failed=1 retried=0 archived=1`（成功和不可重试归档），超时场景 `processed=0 failed=1 retried=0 archived=1`；不可用 Redis 的 worker 启动 `PING` 失败并退出。`go test ./...`、`go test -race ./...`、`go build ./...` 和 `go vet ./...` 均通过，阶段 8 状态更新为 `DONE`。
 - 2026-08-29 23:10（UTC+8）：阶段 9 首次真实 benchmark 暴露数据隔离问题：测试写入默认队列后，后续真实 Redis 功能测试消费了 benchmark 任务，导致延时和死信验收失败。根因是 benchmark 运行 ID 只作用于任务 ID，未隔离队列，且 Redis 启动脚本默认工作目录可能加载已有 `dump.rdb`。
-- 2026-08-29 23:12（UTC+8）：修复并验证 benchmark 隔离：真实 benchmark 使用纳秒级运行 ID 和独立队列，结束时清理该队列键；PowerShell 启动脚本按端口创建独立临时数据目录，停止脚本同时清理目录。回归测试先因 `benchmarkTaskID` 未定义而编译失败，补充最小实现后通过。最终真实 Redis 结果：`BenchmarkClientEnqueueRealRedis-16` 为 `7285 202047 ns/op 2175 B/op 36 allocs/op`；500ms 延时误差 `2.4021ms`；20 个任务、`Concurrency=4` 时最大并发 `4`、shutdown 日志为 `0s`；10 个死信任务耗时 `10.314ms`、约 `969.6 tasks/s`。阶段 9 功能测试、CI 配置、文档和边界说明已完成，但提交推送被 GitHub OAuth 缺少 `workflow` scope 阻塞，阶段状态暂为 `PARTIAL`，远程仍停留在阶段 8。
+- 2026-08-29 23:12（UTC+8）：修复并验证 benchmark 隔离：真实 benchmark 使用纳秒级运行 ID 和独立队列，结束时清理该队列键；PowerShell 启动脚本按端口创建独立临时数据目录，停止脚本同时清理目录。回归测试先因 `benchmarkTaskID` 未定义而编译失败，补充最小实现后通过。最终真实 Redis 结果：`BenchmarkClientEnqueueRealRedis-16` 为 `7285 202047 ns/op 2175 B/op 36 allocs/op`；500ms 延时误差 `2.4021ms`；20 个任务、`Concurrency=4` 时最大并发 `4`、shutdown 日志为 `0s`；10 个死信任务耗时 `10.314ms`、约 `969.6 tasks/s`。阶段 9 功能测试、CI 配置、文档和边界说明已完成；首次推送时的 GitHub OAuth `workflow` 权限问题随后已解决，最终状态和远程提交以 2026-08-30 00:06 的记录为准。
 - 2026-08-29 23:19（UTC+8）：使用已构建的四个示例二进制重新验收，避免 `go run` 编译时间消耗 worker 的 `-run-for` 窗口；Redis 8.10.0 隔离实例上图像 worker 输出 `processed=1 failed=1 retried=0 archived=1`，C2PA worker 输出 `processed=0 failed=1 retried=0 archived=1`，两个 worker 均先报告 Redis connected 并按时自动 shutdown。此前 `go run` 版本因编译耗时导致 C2PA 任务在 worker 退出后才入队，该次结果已明确不作为验收证据。
+- 2026-08-30 00:06（UTC+8）：用户已补充 GitHub OAuth `workflow` 权限并重新推送阶段 9；`git ls-remote origin refs/heads/main` 确认远程 `main` 已指向 `5b3dc2b`。README、根进度记录和 `docs/` 文档同步更新为阶段 9 `DONE`；CI 工作流已纳入远程发布。
