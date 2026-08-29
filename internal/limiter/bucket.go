@@ -27,13 +27,56 @@ type TokenBucket struct {
 }
 
 func NewTokenBucket(client redis.UniversalClient, key string, capacity, ratePerSecond float64) *TokenBucket {
-	if capacity <= 0 {
-		panic("token bucket capacity must be positive")
+	if capacity <= 0 || math.IsNaN(capacity) || math.IsInf(capacity, 0) {
+		panic("token bucket capacity must be finite and positive")
 	}
-	if ratePerSecond < 0 {
-		panic("token bucket rate cannot be negative")
+	if ratePerSecond < 0 || math.IsNaN(ratePerSecond) || math.IsInf(ratePerSecond, 0) {
+		panic("token bucket rate must be finite and non-negative")
 	}
 	return &TokenBucket{client: client, key: key, capacity: capacity, ratePerSecond: ratePerSecond}
+}
+
+var ErrInvalidConfig = errors.New("invalid token bucket configuration")
+
+func ScopeKey(scope string) string {
+	if scope == "" {
+		panic("token bucket scope cannot be empty")
+	}
+	return "gte:limiter:" + scope
+}
+
+func NewScopedTokenBucket(client redis.UniversalClient, scope string, capacity, ratePerSecond float64) *TokenBucket {
+	return NewTokenBucket(client, ScopeKey(scope), capacity, ratePerSecond)
+}
+
+func (b *TokenBucket) Validate() error {
+	if b == nil || b.client == nil {
+		return fmt.Errorf("%w: client is nil", ErrInvalidConfig)
+	}
+	if b.key == "" {
+		return fmt.Errorf("%w: key is empty", ErrInvalidConfig)
+	}
+	if b.capacity <= 0 || math.IsNaN(b.capacity) || math.IsInf(b.capacity, 0) {
+		return fmt.Errorf("%w: capacity must be finite and positive", ErrInvalidConfig)
+	}
+	if b.ratePerSecond < 0 || math.IsNaN(b.ratePerSecond) || math.IsInf(b.ratePerSecond, 0) {
+		return fmt.Errorf("%w: rate must be finite and non-negative", ErrInvalidConfig)
+	}
+	return nil
+}
+
+func (b *TokenBucket) Capacity() float64 {
+	if b == nil {
+		return 0
+	}
+	return b.capacity
+}
+
+func (b *TokenBucket) RatePerSecond() float64 {
+	if b == nil {
+		return 0
+	}
+	return b.ratePerSecond
 }
 
 var acquireScript = redis.NewScript(`
@@ -70,8 +113,11 @@ func (b *TokenBucket) Acquire(ctx context.Context, amount float64) (Result, erro
 	if b == nil || b.client == nil {
 		return Result{}, errors.New("token bucket client is nil")
 	}
-	if amount <= 0 || math.IsNaN(amount) {
-		return Result{}, errors.New("token amount must be positive")
+	if amount <= 0 || math.IsNaN(amount) || math.IsInf(amount, 0) {
+		return Result{}, errors.New("token amount must be finite and positive")
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	value, err := acquireScript.Run(ctx, b.client, []string{b.key}, b.capacity, b.ratePerSecond, amount).Result()
 	if err != nil {

@@ -38,7 +38,8 @@ flowchart LR
 - `server.Config.LeaseDuration`：active 任务租约时长。
 - `server.Config.RetryBaseDelay` 和 `RetryMaxDelay`：重试退避起点和上限。
 - `server.Config.RetryJitter`：重试退避的对称随机比例，范围为 `0` 到 `1`。
-- `server.Config.TokenBucket`：可选的共享 Redis 令牌桶。
+- `server.Config.TokenBucket`：可选的共享 Redis 令牌桶；可通过公开 `limiter.NewScopedTokenBucket` 按业务 scope 创建。
+- `server.Config.TokenAmount`：每次领取任务消耗的令牌数，不能大于 bucket 容量。
 - `server.Config.Metrics`：可选的实际 worker 路径计数器。
 - `server.Config.HeartbeatInterval` 必须小于 `server.Config.LeaseDuration`；不满足时 `Start` 返回 `ErrInvalidConfig`。
 

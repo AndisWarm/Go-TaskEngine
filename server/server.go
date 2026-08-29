@@ -4,14 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"math/rand"
 	"os"
 	"sort"
 	"sync"
 	"time"
 
-	"go-taskengine/internal/limiter"
-	localtimer "go-taskengine/internal/timer"
+	"go-taskengine/internal/timer"
+	"go-taskengine/limiter"
 	"go-taskengine/model"
 	"go-taskengine/redisstore"
 	"go-taskengine/storage"
@@ -95,6 +96,14 @@ func (c *Config) validate() error {
 	if c.RetryJitter < 0 || c.RetryJitter > 1 {
 		return fmt.Errorf("%w: retry jitter must be between 0 and 1: %f", ErrInvalidConfig, c.RetryJitter)
 	}
+	if c.TokenBucket != nil {
+		if err := c.TokenBucket.Validate(); err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalidConfig, err)
+		}
+		if math.IsNaN(c.TokenAmount) || math.IsInf(c.TokenAmount, 0) || c.TokenAmount > c.TokenBucket.Capacity() {
+			return fmt.Errorf("%w: token amount must be finite and no greater than bucket capacity", ErrInvalidConfig)
+		}
+	}
 	return nil
 }
 
@@ -111,7 +120,7 @@ type Server struct {
 	stopOne      sync.Once
 	ctx          context.Context
 	cancel       context.CancelFunc
-	wheel        *localtimer.TimeWheel
+	wheel        *timer.TimeWheel
 	dispatchWake chan struct{}
 	wg           sync.WaitGroup
 	active       map[string]*model.TaskMessage
@@ -158,7 +167,7 @@ func (s *Server) Start() error {
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.stopCh = make(chan struct{})
 	s.dispatchWake = make(chan struct{}, 1)
-	s.wheel = localtimer.New()
+	s.wheel = timer.New()
 	s.state = stateRunning
 	jobs := make(chan *model.TaskMessage)
 	s.wg.Add(1)

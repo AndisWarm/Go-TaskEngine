@@ -35,6 +35,12 @@ removed, err := deadLetters.CleanupDeadLetters(ctx, "default", time.Now().Add(-2
 
 重放会清零重试次数并将任务放回 pending；死信操作仍遵循至少一次执行语义。
 
+## 分布式限流
+
+- `limiter.NewScopedTokenBucket` 使用 `gte:limiter:<scope>` 作为 Redis key；相同 scope 的不同 server 共享容量和补充速率，不同 scope 相互隔离。
+- Lua 脚本使用 Redis 服务端时间完成原子补充和扣减；server 在 `Claim` 前获取令牌，令牌不足时依据 `RetryAfter` 等待，不会领取 pending 任务。
+- miniredis 和真实 Redis 测试均覆盖 burst、补充、并发竞争和双 server 共享 bucket。真实 Redis 双 server 测试中，容量为 1、速率为 10 token/s，4 个任务的 handler 时间跨度实测为 304.7ms；该结果不代表生产吞吐保证。
+
 ## 测试
 
 不需要外部 Redis 的单元测试使用 miniredis。完整验证命令为：

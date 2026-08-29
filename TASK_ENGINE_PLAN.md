@@ -103,7 +103,7 @@
 - 阶段 3：`DONE` —— 已增加按任务类型注册/路由的 `HandlerMux`，未知类型返回明确错误；服务端存储错误通过 `Config.ErrorHandler` 暴露，成功/重试/归档指标只在对应状态转换成功后记录；完整队列优先级顺序和 Redis 调度错误测试已通过。
 - 阶段 4：`DONE` —— `TimeWheel` 已支持可注入时钟、并发 Schedule/Cancel、慢回调串行语义和显式唤醒；dispatcher 使用本地定时器唤醒 Redis 到期扫描，Redis Lua 脚本负责持久状态搬运和重复消费保护；新增 500ms 跨秒、重启发现、双 dispatcher 和危险 heartbeat 配置测试；阶段测试、全量测试、构建和 vet 均通过。
 - 阶段 5：`DONE` —— 已实现带抖动和上限的指数退避、不可重试和最大重试处理、死信分页查询/按 ID 查询/重放/删除/清理、heartbeat 和 recovery loop；新增 miniredis 状态测试及真实 Redis 独立进程 lease 故障恢复测试，阶段测试、全量测试、构建和 vet 均通过。
-- 阶段 6：`PLANNED`
+- 阶段 6：`DONE` —— 已将 Token Bucket 通过公开 `limiter` 包暴露，补充 scope 隔离、非有限令牌量和 server 配置校验；新增两个 server 共享同一 Redis bucket 的 miniredis 测试，并通过 `GTE_REAL_REDIS=1` 的真实 Redis 双实例测试；阶段 race、全量测试、构建和 vet 均通过。
 - 阶段 7：`PLANNED`
 - 阶段 8：`PLANNED`
 - 阶段 9：`PLANNED`
@@ -165,3 +165,5 @@
 - 2026-08-29 21:04（UTC+8）：阶段 5 按测试驱动顺序新增指数退避抖动边界、不可重试、最大重试、死信分页/字段、死信重放、删除/清理、恢复循环和独立进程故障测试；预实现验证先确认死信接口、退避函数和配置字段未定义。
 - 2026-08-29 21:08（UTC+8）：阶段 5 完成：新增 `storage.DeadLetterStore` 公开接口及 Redis 原子死信查询、重放、删除和清理；`server.Config.RetryJitter` 接入退避计算并保留 `RetryMaxDelay` 上限；recovery loop 在 lease 恢复成功后记录重试/归档指标。默认 miniredis 测试和 `GTE_REAL_REDIS=1` 的 Redis 8.10.0 独立进程故障测试均通过；`go test ./server ./redisstore ./internal/redisstore -run 'Test.*Retry|Test.*Dead|Test.*Lease' -race`、`go test ./...`、`go test ./... -race`、`go build ./...` 和 `go vet ./...` 均通过。阶段 5 状态更新为 `DONE`。
 - 2026-08-29 21:12（UTC+8）：阶段 5 提交 `e04274d feat(phase-5): complete retry dead-letter and lease recovery` 已推送到 GitHub `main` 分支。
+- 2026-08-29 21:25（UTC+8）：阶段 6 按测试驱动顺序新增 scope 隔离、非有限令牌量、公开 `limiter` 包、server 配置校验和双 server 共享 Token Bucket 测试；预实现验证先确认公开包和 scope 构造缺失。
+- 2026-08-29 21:30（UTC+8）：阶段 6 完成：`server.Config.TokenBucket` 改用公开 `limiter.TokenBucket`，同 scope 使用 `gte:limiter:<scope>` 共享 Redis bucket，不同 scope 隔离；Lua 继续使用 Redis 服务端时间并在 `Claim` 前扣令牌。`go test ./internal/limiter ./server -race`、`go test ./... -race`、`go build ./...`、`go vet ./...` 和 `GTE_REAL_REDIS=1 go test ./server -run '^TestTwoServersShareOneTokenBucketRealRedis$' -race` 均通过；真实 Redis 双 server 的 4 个任务时间跨度实测为 304.7ms。阶段 6 状态更新为 `DONE`。

@@ -2,6 +2,7 @@ package limiter
 
 import (
 	"context"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -32,6 +33,29 @@ func TestTokenBucketHonorsBurstCapacity(t *testing.T) {
 	}
 	if result.Allowed || result.RetryAfter <= 0 {
 		t.Fatalf("third acquire: %+v", result)
+	}
+}
+
+func TestTokenBucketScopesAreIndependent(t *testing.T) {
+	mini := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mini.Addr()})
+	defer rdb.Close()
+	first := NewScopedTokenBucket(rdb, "tenant-a", 1, 0)
+	second := NewScopedTokenBucket(rdb, "tenant-b", 1, 0)
+	if result, err := first.Acquire(context.Background(), 1); err != nil || !result.Allowed {
+		t.Fatalf("first scope acquire: %+v, %v", result, err)
+	}
+	if result, err := second.Acquire(context.Background(), 1); err != nil || !result.Allowed {
+		t.Fatalf("second scope acquire: %+v, %v", result, err)
+	}
+}
+
+func TestTokenBucketRejectsNonFiniteAmount(t *testing.T) {
+	bucket, _ := testBucket(t, 1, 1)
+	for _, amount := range []float64{math.Inf(1), math.Inf(-1)} {
+		if _, err := bucket.Acquire(context.Background(), amount); err == nil {
+			t.Fatalf("amount %v was accepted", amount)
+		}
 	}
 }
 

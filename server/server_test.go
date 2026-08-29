@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"go-taskengine/client"
-	"go-taskengine/internal/limiter"
 	"go-taskengine/internal/redisstore"
+	"go-taskengine/limiter"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -114,6 +114,19 @@ func TestServerRejectsUnsafeHeartbeatInterval(t *testing.T) {
 	})
 	if err := s.Start(); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("Start error = %v, want ErrInvalidConfig", err)
+	}
+}
+
+func TestServerRejectsInvalidTokenBucketConfiguration(t *testing.T) {
+	cases := []Config{
+		{TokenBucket: limiter.NewScopedTokenBucket(nil, "invalid-client", 1, 1)},
+		{TokenBucket: limiter.NewScopedTokenBucket(redis.NewClient(&redis.Options{}), "too-large", 1, 1), TokenAmount: 2},
+	}
+	for i, cfg := range cases {
+		s, _ := testServer(t, HandlerFunc(func(context.Context, *TaskMessage) error { return nil }), cfg)
+		if err := s.Start(); !errors.Is(err, ErrInvalidConfig) {
+			t.Fatalf("case %d Start error = %v, want ErrInvalidConfig", i, err)
+		}
 	}
 }
 
@@ -233,6 +246,57 @@ func TestTwoDispatchersDoNotDuplicateDelayedTask(t *testing.T) {
 	}
 	if got := processed.Load(); got != 1 {
 		t.Fatalf("processed task count = %d, want 1", got)
+	}
+}
+
+func TestTwoServersShareOneTokenBucket(t *testing.T) {
+	mini := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mini.Addr()})
+	defer rdb.Close()
+	store := redisstore.New(rdb)
+	producer := client.NewClient(store)
+	var processed atomic.Int32
+	var mu sync.Mutex
+	var times []time.Time
+	handler := HandlerFunc(func(_ context.Context, _ *TaskMessage) error {
+		mu.Lock()
+		times = append(times, time.Now())
+		mu.Unlock()
+		processed.Add(1)
+		return nil
+	})
+	first := New(store, handler, Config{
+		Concurrency: 1, PollInterval: time.Millisecond,
+		TokenBucket: limiter.NewScopedTokenBucket(rdb, "two-servers", 1, 10),
+	})
+	second := New(store, handler, Config{
+		Concurrency: 1, PollInterval: time.Millisecond,
+		TokenBucket: limiter.NewScopedTokenBucket(rdb, "two-servers", 1, 10),
+	})
+	for i := 0; i < 4; i++ {
+		if _, err := producer.Enqueue(context.Background(), client.NewTask("shared-limit", nil), client.WithTaskID("shared-limit-"+string(rune('a'+i)))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := first.Start(); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, time.Second, func() bool { return processed.Load() == 4 })
+	if err := first.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Shutdown(); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	elapsed := times[len(times)-1].Sub(times[0])
+	mu.Unlock()
+	t.Logf("two-server shared bucket elapsed = %s", elapsed)
+	if elapsed < 250*time.Millisecond {
+		t.Fatalf("shared token bucket elapsed = %s, want at least 250ms", elapsed)
 	}
 }
 
