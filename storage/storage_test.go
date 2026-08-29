@@ -30,9 +30,9 @@ func (publicStore) Get(context.Context, string, string) (*model.TaskMessage, err
 func (publicStore) ExpiredIDs(context.Context, time.Time, string, int) ([]string, error) {
 	return nil, nil
 }
-func (publicStore) PendingCount(context.Context, string) int64  { return 0 }
-func (publicStore) RetryCount(context.Context, string) int64    { return 0 }
-func (publicStore) ArchivedCount(context.Context, string) int64 { return 0 }
+func (publicStore) PendingCount(context.Context, string) (int64, error)  { return 0, nil }
+func (publicStore) RetryCount(context.Context, string) (int64, error)    { return 0, nil }
+func (publicStore) ArchivedCount(context.Context, string) (int64, error) { return 0, nil }
 func (publicStore) ExtendLease(context.Context, string, []string, time.Time, time.Duration) error {
 	return nil
 }

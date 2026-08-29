@@ -47,6 +47,8 @@ type Config struct {
 	TokenBucket       *limiter.TokenBucket
 	TokenAmount       float64
 	Metrics           *Metrics
+	// ErrorHandler receives storage and lifecycle errors that the server cannot recover from immediately.
+	ErrorHandler func(error)
 }
 
 func (c *Config) applyDefaults() {
@@ -150,6 +152,12 @@ func (s *Server) Start() error {
 	return nil
 }
 
+func (s *Server) reportError(err error) {
+	if err != nil && s.cfg.ErrorHandler != nil {
+		s.cfg.ErrorHandler(err)
+	}
+}
+
 func (s *Server) dispatch(jobs chan<- *model.TaskMessage) {
 	defer s.wg.Done()
 	defer close(jobs)
@@ -159,10 +167,21 @@ func (s *Server) dispatch(jobs chan<- *model.TaskMessage) {
 			return
 		default:
 		}
-		_, _ = s.store.MoveReady(s.ctx, time.Now(), 100, s.queues...)
+		if _, err := s.store.MoveReady(s.ctx, time.Now(), 100, s.queues...); err != nil {
+			s.reportError(err)
+			if !s.waitOrStop(s.cfg.PollInterval) {
+				return
+			}
+			continue
+		}
 		hasPending := false
 		for _, queue := range s.queues {
-			if s.store.PendingCount(s.ctx, queue) > 0 {
+			pending, err := s.store.PendingCount(s.ctx, queue)
+			if err != nil {
+				s.reportError(err)
+				continue
+			}
+			if pending > 0 {
 				hasPending = true
 				break
 			}
@@ -176,6 +195,7 @@ func (s *Server) dispatch(jobs chan<- *model.TaskMessage) {
 		if s.cfg.TokenBucket != nil {
 			result, err := s.cfg.TokenBucket.Acquire(s.ctx, s.cfg.TokenAmount)
 			if err != nil {
+				s.reportError(err)
 				if !s.waitOrStop(s.cfg.PollInterval) {
 					return
 				}
@@ -195,13 +215,16 @@ func (s *Server) dispatch(jobs chan<- *model.TaskMessage) {
 				continue
 			}
 			if err != nil {
+				s.reportError(err)
 				continue
 			}
 			claimed = true
 			select {
 			case jobs <- msg:
 			case <-s.stopCh:
-				_ = s.store.Requeue(context.Background(), msg)
+				if err := s.store.Requeue(context.Background(), msg); err != nil {
+					s.reportError(err)
+				}
 				return
 			}
 			break
@@ -255,7 +278,10 @@ func (s *Server) process(msg *model.TaskMessage) {
 	defer cancel()
 	err := s.handler.ProcessTask(ctx, msg)
 	if err == nil {
-		_ = s.store.AckSuccess(context.Background(), msg)
+		if ackErr := s.store.AckSuccess(context.Background(), msg); ackErr != nil {
+			s.reportError(ackErr)
+			return
+		}
 		if s.cfg.Metrics != nil {
 			s.cfg.Metrics.RecordProcessed()
 		}
@@ -266,7 +292,10 @@ func (s *Server) process(msg *model.TaskMessage) {
 	}
 	reason := err.Error()
 	if errors.Is(err, ErrNonRetryable) || msg.RetryCount >= msg.MaxRetry {
-		_ = s.store.Archive(context.Background(), msg, reason)
+		if archiveErr := s.store.Archive(context.Background(), msg, reason); archiveErr != nil {
+			s.reportError(archiveErr)
+			return
+		}
 		if s.cfg.Metrics != nil {
 			s.cfg.Metrics.RecordArchived()
 		}
@@ -274,7 +303,10 @@ func (s *Server) process(msg *model.TaskMessage) {
 	}
 	at := time.Now().Add(ExponentialBackoff(msg.RetryCount, s.cfg.RetryBaseDelay, s.cfg.RetryMaxDelay))
 	msg.RetryCount++
-	_ = s.store.ScheduleRetry(context.Background(), msg, at, reason)
+	if retryErr := s.store.ScheduleRetry(context.Background(), msg, at, reason); retryErr != nil {
+		s.reportError(retryErr)
+		return
+	}
 	if s.cfg.Metrics != nil {
 		s.cfg.Metrics.RecordRetried()
 	}
@@ -296,7 +328,9 @@ func (s *Server) heartbeatLoop() {
 			}
 			s.mu.Unlock()
 			for queue, ids := range byQueue {
-				_ = s.store.ExtendLease(context.Background(), queue, ids, now, s.cfg.LeaseDuration)
+				if err := s.store.ExtendLease(context.Background(), queue, ids, now, s.cfg.LeaseDuration); err != nil {
+					s.reportError(err)
+				}
 			}
 		}
 	}
@@ -314,19 +348,28 @@ func (s *Server) recoveryLoop() {
 			for _, queue := range s.queues {
 				ids, err := s.store.ExpiredIDs(context.Background(), now, queue, 100)
 				if err != nil {
+					s.reportError(err)
 					continue
 				}
 				for _, id := range ids {
 					msg, err := s.store.Get(context.Background(), queue, id)
-					if err != nil || msg.State != model.StateActive {
+					if err != nil {
+						s.reportError(err)
+						continue
+					}
+					if msg.State != model.StateActive {
 						continue
 					}
 					if msg.RetryCount >= msg.MaxRetry {
-						_ = s.store.Archive(context.Background(), msg, "task lease expired")
+						if err := s.store.Archive(context.Background(), msg, "task lease expired"); err != nil {
+							s.reportError(err)
+						}
 						continue
 					}
 					msg.RetryCount++
-					_ = s.store.ScheduleRetry(context.Background(), msg, now.Add(ExponentialBackoff(msg.RetryCount-1, s.cfg.RetryBaseDelay, s.cfg.RetryMaxDelay)), "task lease expired")
+					if err := s.store.ScheduleRetry(context.Background(), msg, now.Add(ExponentialBackoff(msg.RetryCount-1, s.cfg.RetryBaseDelay, s.cfg.RetryMaxDelay)), "task lease expired"); err != nil {
+						s.reportError(err)
+					}
 				}
 			}
 		}
@@ -395,7 +438,9 @@ func (s *Server) requeueActive() {
 	}
 	s.mu.Unlock()
 	for _, msg := range active {
-		_ = s.store.Requeue(context.Background(), msg)
+		if err := s.store.Requeue(context.Background(), msg); err != nil {
+			s.reportError(err)
+		}
 	}
 }
 

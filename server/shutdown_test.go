@@ -88,5 +88,9 @@ func TestHandlerReceivesCancellationWhenServerStops(t *testing.T) {
 
 func producerStorePending(t *testing.T, s *Server, queue string) int64 {
 	t.Helper()
-	return s.store.PendingCount(context.Background(), queue)
+	got, err := s.store.PendingCount(context.Background(), queue)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
 }

@@ -21,8 +21,8 @@ type TaskStore interface {
 	Requeue(context.Context, *model.TaskMessage) error
 	Get(context.Context, string, string) (*model.TaskMessage, error)
 	ExpiredIDs(context.Context, time.Time, string, int) ([]string, error)
-	PendingCount(context.Context, string) int64
-	RetryCount(context.Context, string) int64
-	ArchivedCount(context.Context, string) int64
+	PendingCount(context.Context, string) (int64, error)
+	RetryCount(context.Context, string) (int64, error)
+	ArchivedCount(context.Context, string) (int64, error)
 	ExtendLease(context.Context, string, []string, time.Time, time.Duration) error
 }

@@ -328,14 +328,14 @@ func (s *Store) ExpiredIDs(ctx context.Context, now time.Time, queue string, lim
 	}).Result()
 }
 
-func (s *Store) PendingCount(ctx context.Context, queue string) int64 {
-	return s.client.ZCard(ctx, PendingRankKey(queue)).Val()
+func (s *Store) PendingCount(ctx context.Context, queue string) (int64, error) {
+	return s.client.ZCard(ctx, PendingRankKey(queue)).Result()
 }
-func (s *Store) RetryCount(ctx context.Context, queue string) int64 {
-	return s.client.ZCard(ctx, RetryKey(queue)).Val()
+func (s *Store) RetryCount(ctx context.Context, queue string) (int64, error) {
+	return s.client.ZCard(ctx, RetryKey(queue)).Result()
 }
-func (s *Store) ArchivedCount(ctx context.Context, queue string) int64 {
-	return s.client.ZCard(ctx, ArchivedKey(queue)).Val()
+func (s *Store) ArchivedCount(ctx context.Context, queue string) (int64, error) {
+	return s.client.ZCard(ctx, ArchivedKey(queue)).Result()
 }
 
 func (s *Store) ExtendLease(ctx context.Context, queue string, ids []string, now time.Time, lease time.Duration) error {

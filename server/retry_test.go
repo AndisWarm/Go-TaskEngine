@@ -67,8 +67,8 @@ func TestPermanentFailureIsArchived(t *testing.T) {
 	if err := store.Archive(context.Background(), active, "bad input"); err != nil {
 		t.Fatal(err)
 	}
-	if got := store.ArchivedCount(context.Background(), "default"); got != 1 {
-		t.Fatalf("archived=%d", got)
+	if got, err := store.ArchivedCount(context.Background(), "default"); err != nil || got != 1 {
+		t.Fatalf("archived=%d err=%v", got, err)
 	}
 }
 

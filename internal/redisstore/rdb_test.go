@@ -95,8 +95,8 @@ func TestRetryAndArchiveTransitions(t *testing.T) {
 	if err := store.ScheduleRetry(ctx, active, now.Add(2*time.Second), "temporary"); err != nil {
 		t.Fatal(err)
 	}
-	if n := store.RetryCount(ctx, "default"); n != 1 {
-		t.Fatalf("retry count = %d", n)
+	if got, err := store.RetryCount(ctx, "default"); err != nil || got != 1 {
+		t.Fatalf("retry count = %d, err=%v", got, err)
 	}
 	retry, err := store.Claim(ctx, "default", now.Add(2*time.Second), time.Second)
 	if err == nil || retry != nil {
@@ -112,8 +112,8 @@ func TestRetryAndArchiveTransitions(t *testing.T) {
 	if err := store.Archive(ctx, retry, "permanent"); err != nil {
 		t.Fatal(err)
 	}
-	if n := store.ArchivedCount(ctx, "default"); n != 1 {
-		t.Fatalf("archived count = %d", n)
+	if got, err := store.ArchivedCount(ctx, "default"); err != nil || got != 1 {
+		t.Fatalf("archived count = %d, err=%v", got, err)
 	}
 }
 

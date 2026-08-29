@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -95,6 +96,9 @@ func TestServerProcessesHigherPriorityQueueFirst(t *testing.T) {
 	waitFor(t, time.Second, func() bool { mu.Lock(); defer mu.Unlock(); return len(order) == 6 })
 	if order[0] != "high" {
 		t.Fatalf("first queue = %q, order=%v", order[0], order)
+	}
+	if want := []string{"high", "high", "high", "low", "low", "low"}; !slices.Equal(order, want) {
+		t.Fatalf("queue order = %v, want %v", order, want)
 	}
 	if err := s.Shutdown(); err != nil {
 		t.Fatal(err)
