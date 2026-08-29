@@ -36,6 +36,7 @@ type TaskMessage struct {
 	State        TaskState     `json:"state"`
 	LastError    string        `json:"last_error,omitempty"`
 	LastFailedAt time.Time     `json:"last_failed_at,omitempty"`
+	CompletedAt  time.Time     `json:"completed_at,omitempty"`
 	CreatedAt    time.Time     `json:"created_at"`
 }
 

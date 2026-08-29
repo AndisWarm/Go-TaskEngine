@@ -16,6 +16,7 @@ const keyPrefix = "gte:"
 
 var ErrNoTask = errors.New("no processable task")
 var ErrTaskExists = errors.New("task already exists")
+var ErrInvalidTransition = errors.New("invalid task state transition")
 
 // Store persists tasks and performs state transitions atomically in Redis.
 type Store struct {
@@ -108,7 +109,7 @@ var ackScript = redis.NewScript(`
 if redis.call("HGET", KEYS[1], "state") ~= "active" then return 0 end
 redis.call("LREM", KEYS[2], 1, ARGV[1])
 redis.call("ZREM", KEYS[3], ARGV[1])
-redis.call("DEL", KEYS[1])
+redis.call("HSET", KEYS[1], "msg", ARGV[2], "state", "completed", "completed_at", ARGV[3])
 return 1
 `)
 
@@ -215,63 +216,85 @@ func (s *Store) MoveReady(ctx context.Context, now time.Time, limit int, queues 
 	moved := 0
 	for _, queue := range queues {
 		for _, source := range []string{ScheduledKey(queue), RetryKey(queue)} {
-			ids, err := s.client.ZRangeByScore(ctx, source, &redis.ZRangeBy{Min: "-inf", Max: strconv.FormatInt(now.UnixMilli(), 10), Offset: 0, Count: int64(limit)}).Result()
+			n, err := moveReadyScript.Run(ctx, s.client, []string{source, PendingKey(queue), PendingRankKey(queue)}, now.UnixMilli(), limit, queuePrefix(queue)+"task:").Int()
 			if err != nil {
-				return moved, fmt.Errorf("find ready tasks: %w", err)
+				return moved, fmt.Errorf("move ready tasks: %w", err)
 			}
-			for _, id := range ids {
-				n, err := moveOneScript.Run(ctx, s.client, []string{source, PendingKey(queue), PendingRankKey(queue), TaskKey(queue, id)}, id).Int()
-				if err != nil {
-					return moved, fmt.Errorf("move ready task: %w", err)
-				}
-				moved += n
-			}
+			moved += n
 		}
 	}
 	return moved, nil
 }
 
 func (s *Store) AckSuccess(ctx context.Context, msg *model.TaskMessage) error {
-	_, err := ackScript.Run(ctx, s.client, []string{TaskKey(msg.Queue, msg.ID), ActiveKey(msg.Queue), LeaseKey(msg.Queue)}, msg.ID).Int()
+	completed := *msg
+	completed.State = model.StateCompleted
+	completed.CompletedAt = time.Now()
+	encoded, err := json.Marshal(&completed)
+	if err != nil {
+		return fmt.Errorf("encode completed task: %w", err)
+	}
+	result, err := ackScript.Run(ctx, s.client, []string{TaskKey(msg.Queue, msg.ID), ActiveKey(msg.Queue), LeaseKey(msg.Queue)}, msg.ID, encoded, completed.CompletedAt.UnixMilli()).Int()
 	if err != nil {
 		return fmt.Errorf("ack task: %w", err)
 	}
+	if result == 0 {
+		return ErrInvalidTransition
+	}
+	msg.State = model.StateCompleted
+	msg.CompletedAt = completed.CompletedAt
 	return nil
 }
 
 func (s *Store) ScheduleRetry(ctx context.Context, msg *model.TaskMessage, at time.Time, reason string) error {
-	msg.State = model.StateRetry
-	msg.LastError = reason
-	msg.LastFailedAt = time.Now()
-	encoded, err := json.Marshal(msg)
+	retry := *msg
+	retry.State = model.StateRetry
+	retry.LastError = reason
+	retry.LastFailedAt = time.Now()
+	encoded, err := json.Marshal(&retry)
 	if err != nil {
 		return fmt.Errorf("encode retry task: %w", err)
 	}
-	_, err = retryScript.Run(ctx, s.client, []string{TaskKey(msg.Queue, msg.ID), ActiveKey(msg.Queue), LeaseKey(msg.Queue), RetryKey(msg.Queue)}, msg.ID, encoded, at.UnixMilli(), reason).Int()
+	result, err := retryScript.Run(ctx, s.client, []string{TaskKey(msg.Queue, msg.ID), ActiveKey(msg.Queue), LeaseKey(msg.Queue), RetryKey(msg.Queue)}, msg.ID, encoded, at.UnixMilli(), reason).Int()
 	if err != nil {
 		return fmt.Errorf("schedule retry: %w", err)
 	}
+	if result == 0 {
+		return ErrInvalidTransition
+	}
+	msg.State = model.StateRetry
+	msg.LastError = reason
+	msg.LastFailedAt = retry.LastFailedAt
 	return nil
 }
 
 func (s *Store) Archive(ctx context.Context, msg *model.TaskMessage, reason string) error {
-	msg.State = model.StateArchived
-	msg.LastError = reason
-	encoded, err := json.Marshal(msg)
+	archived := *msg
+	archived.State = model.StateArchived
+	archived.LastError = reason
+	encoded, err := json.Marshal(&archived)
 	if err != nil {
 		return fmt.Errorf("encode archived task: %w", err)
 	}
-	_, err = archiveScript.Run(ctx, s.client, []string{TaskKey(msg.Queue, msg.ID), ActiveKey(msg.Queue), LeaseKey(msg.Queue), ArchivedKey(msg.Queue)}, msg.ID, encoded, reason, time.Now().UnixMilli()).Int()
+	result, err := archiveScript.Run(ctx, s.client, []string{TaskKey(msg.Queue, msg.ID), ActiveKey(msg.Queue), LeaseKey(msg.Queue), ArchivedKey(msg.Queue)}, msg.ID, encoded, reason, time.Now().UnixMilli()).Int()
 	if err != nil {
 		return fmt.Errorf("archive task: %w", err)
 	}
+	if result == 0 {
+		return ErrInvalidTransition
+	}
+	msg.State = model.StateArchived
+	msg.LastError = reason
 	return nil
 }
 
 func (s *Store) Requeue(ctx context.Context, msg *model.TaskMessage) error {
-	_, err := requeueScript.Run(ctx, s.client, []string{TaskKey(msg.Queue, msg.ID), ActiveKey(msg.Queue), LeaseKey(msg.Queue), PendingKey(msg.Queue), PendingRankKey(msg.Queue)}, msg.ID).Int()
+	result, err := requeueScript.Run(ctx, s.client, []string{TaskKey(msg.Queue, msg.ID), ActiveKey(msg.Queue), LeaseKey(msg.Queue), PendingKey(msg.Queue), PendingRankKey(msg.Queue)}, msg.ID).Int()
 	if err != nil {
 		return fmt.Errorf("requeue task: %w", err)
+	}
+	if result == 0 {
+		return ErrInvalidTransition
 	}
 	msg.State = model.StatePending
 	return nil

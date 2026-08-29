@@ -9,8 +9,9 @@ import (
 type Store = internalredisstore.Store
 
 var (
-	ErrNoTask     = internalredisstore.ErrNoTask
-	ErrTaskExists = internalredisstore.ErrTaskExists
+	ErrNoTask            = internalredisstore.ErrNoTask
+	ErrTaskExists        = internalredisstore.ErrTaskExists
+	ErrInvalidTransition = internalredisstore.ErrInvalidTransition
 )
 
 var (

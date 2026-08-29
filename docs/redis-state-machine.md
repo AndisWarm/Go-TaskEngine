@@ -11,8 +11,8 @@
 - `retry`：重试任务 ZSet，score 为下次执行的 Unix 毫秒时间戳。
 - `active`：执行中的任务 List。
 - `lease`：执行中任务的租约到期 ZSet。
-- `archived`：死信/失败归档 ZSet。
-
+- `archived`：死信/失败归档 ZSet，score 为归档时间的 Unix 毫秒时间戳。
+- 已成功的任务保留在原任务 Hash 中，状态变为 `completed`，并写入 `completed_at`；当前没有单独的 completed ZSet。
 ## 状态转换
 
 ```mermaid

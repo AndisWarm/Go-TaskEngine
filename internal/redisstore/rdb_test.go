@@ -45,8 +45,15 @@ func TestEnqueueClaimAndAckUsesAtomicState(t *testing.T) {
 	if err := store.AckSuccess(ctx, got); err != nil {
 		t.Fatal(err)
 	}
-	if exists := rdb.Exists(ctx, TaskKey("default", "high")).Val(); exists != 0 {
-		t.Fatal("ack did not remove task")
+	completed, err := store.Get(ctx, "default", "high")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.State != model.StateCompleted {
+		t.Fatalf("completed state = %s", completed.State)
+	}
+	if exists := rdb.Exists(ctx, TaskKey("default", "high")).Val(); exists != 1 {
+		t.Fatal("ack removed completed task record")
 	}
 }
 
