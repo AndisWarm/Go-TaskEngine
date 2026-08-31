@@ -2,6 +2,8 @@ package storage
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -52,5 +54,26 @@ func TestStorageErrorsAreDefinedAndDistinct(t *testing.T) {
 				t.Fatalf("contract errors %d and %d have the same identity", i, j)
 			}
 		}
+	}
+}
+
+func TestTaskAbsenceErrorsAreDistinctAndBackwardCompatible(t *testing.T) {
+	if ErrQueueEmpty == ErrTaskNotFound {
+		t.Fatal("queue-empty and task-not-found errors share one identity")
+	}
+	if !errors.Is(ErrQueueEmpty, ErrNoTask) {
+		t.Fatal("ErrQueueEmpty is not compatible with ErrNoTask")
+	}
+	if !errors.Is(ErrTaskNotFound, ErrNoTask) {
+		t.Fatal("ErrTaskNotFound is not compatible with ErrNoTask")
+	}
+	if !IsQueueEmpty(ErrQueueEmpty) {
+		t.Fatal("ErrQueueEmpty was not classified as an empty queue")
+	}
+	if !IsQueueEmpty(fmt.Errorf("legacy claim: %w", ErrNoTask)) {
+		t.Fatal("wrapped legacy ErrNoTask was not classified as an empty queue")
+	}
+	if IsQueueEmpty(ErrTaskNotFound) {
+		t.Fatal("ErrTaskNotFound was classified as an empty queue")
 	}
 }

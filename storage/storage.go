@@ -4,19 +4,33 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"go-taskengine/model"
 )
 
 var (
-	// ErrNoTask means an operation has no task to return.
+	// ErrNoTask is the compatibility root for operations that cannot return a task.
 	ErrNoTask = errors.New("no processable task")
+	// ErrQueueEmpty means Claim has no task available in the requested queue.
+	ErrQueueEmpty = fmt.Errorf("task queue is empty: %w", ErrNoTask)
+	// ErrTaskNotFound means a task lookup found no task for the requested queue and ID.
+	ErrTaskNotFound = fmt.Errorf("task not found: %w", ErrNoTask)
 	// ErrTaskExists means enqueue or schedule found an existing task ID.
 	ErrTaskExists = errors.New("task already exists")
 	// ErrInvalidTransition means the requested durable state transition is not valid.
 	ErrInvalidTransition = errors.New("invalid task state transition")
 )
+
+// IsQueueEmpty reports whether err means Claim found no available task.
+// It accepts the legacy ErrNoTask unless the error is the new ErrTaskNotFound.
+func IsQueueEmpty(err error) bool {
+	if err == nil || errors.Is(err, ErrTaskNotFound) {
+		return false
+	}
+	return errors.Is(err, ErrQueueEmpty) || errors.Is(err, ErrNoTask)
+}
 
 // TaskStore is the storage contract required by the server worker engine.
 // Implementations must make task state transitions durable and safe for concurrent callers.
@@ -25,7 +39,7 @@ type TaskStore interface {
 	Enqueue(context.Context, *model.TaskMessage) error
 	// Schedule persists a delayed task and returns ErrTaskExists for a duplicate ID.
 	Schedule(context.Context, *model.TaskMessage) error
-	// Claim atomically activates one task or returns ErrNoTask when the queue is empty.
+	// Claim atomically activates one task or returns ErrQueueEmpty when the queue is empty.
 	Claim(context.Context, string, time.Time, time.Duration) (*model.TaskMessage, error)
 	MoveReady(context.Context, time.Time, int, ...string) (int, error)
 	// AckSuccess completes an active task and returns ErrInvalidTransition for a state mismatch.
@@ -36,7 +50,7 @@ type TaskStore interface {
 	Archive(context.Context, *model.TaskMessage, string) error
 	// Requeue returns an active task to pending and returns ErrInvalidTransition for a state mismatch.
 	Requeue(context.Context, *model.TaskMessage) error
-	// Get returns ErrNoTask when the requested task does not exist.
+	// Get returns ErrTaskNotFound when the requested task does not exist.
 	Get(context.Context, string, string) (*model.TaskMessage, error)
 	ExpiredIDs(context.Context, time.Time, string, int) ([]string, error)
 	PendingCount(context.Context, string) (int64, error)

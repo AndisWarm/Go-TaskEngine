@@ -250,7 +250,7 @@ func (s *Server) dispatch(jobs chan<- *model.TaskMessage) {
 		claimed := false
 		for _, queue := range s.queues {
 			msg, err := s.store.Claim(s.ctx, queue, time.Now(), s.cfg.LeaseDuration)
-			if errors.Is(err, storage.ErrNoTask) {
+			if storage.IsQueueEmpty(err) {
 				continue
 			}
 			if err != nil {

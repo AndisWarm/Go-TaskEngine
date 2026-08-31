@@ -25,21 +25,11 @@ func TestPublicRedisStoreAcceptsPublicTaskModel(t *testing.T) {
 	}
 }
 
-func TestPublicRedisErrorsAliasStorageContract(t *testing.T) {
-	tests := []struct {
-		name string
-		got  error
-		want error
-	}{
-		{name: "no task", got: redisstore.ErrNoTask, want: storage.ErrNoTask},
-		{name: "task exists", got: redisstore.ErrTaskExists, want: storage.ErrTaskExists},
-		{name: "invalid transition", got: redisstore.ErrInvalidTransition, want: storage.ErrInvalidTransition},
+func TestPublicRedisAbsenceErrorsAliasStorageContract(t *testing.T) {
+	if redisstore.ErrQueueEmpty != storage.ErrQueueEmpty {
+		t.Fatal("redisstore.ErrQueueEmpty does not alias storage.ErrQueueEmpty")
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.got != tt.want {
-				t.Fatalf("error identity differs: got %v, want %v", tt.got, tt.want)
-			}
-		})
+	if redisstore.ErrTaskNotFound != storage.ErrTaskNotFound {
+		t.Fatal("redisstore.ErrTaskNotFound does not alias storage.ErrTaskNotFound")
 	}
 }

@@ -10,6 +10,8 @@ type Store = internalredisstore.Store
 
 var (
 	ErrNoTask            = internalredisstore.ErrNoTask
+	ErrQueueEmpty        = internalredisstore.ErrQueueEmpty
+	ErrTaskNotFound      = internalredisstore.ErrTaskNotFound
 	ErrTaskExists        = internalredisstore.ErrTaskExists
 	ErrInvalidTransition = internalredisstore.ErrInvalidTransition
 )

@@ -17,6 +17,8 @@ const keyPrefix = "gte:"
 
 var (
 	ErrNoTask            = storage.ErrNoTask
+	ErrQueueEmpty        = storage.ErrQueueEmpty
+	ErrTaskNotFound      = storage.ErrTaskNotFound
 	ErrTaskExists        = storage.ErrTaskExists
 	ErrInvalidTransition = storage.ErrInvalidTransition
 )
@@ -235,7 +237,7 @@ func (s *Store) Claim(ctx context.Context, queue string, now time.Time, lease ti
 	}
 	status, _ := strconv.ParseInt(fmt.Sprint(values[0]), 10, 64)
 	if status == 0 {
-		return nil, ErrNoTask
+		return nil, ErrQueueEmpty
 	}
 	var msg model.TaskMessage
 	if err := json.Unmarshal([]byte(fmt.Sprint(values[1])), &msg); err != nil {
@@ -339,7 +341,7 @@ func (s *Store) Requeue(ctx context.Context, msg *model.TaskMessage) error {
 func (s *Store) Get(ctx context.Context, queue, id string) (*model.TaskMessage, error) {
 	encoded, err := s.client.HGet(ctx, TaskKey(queue, id), "msg").Result()
 	if err == redis.Nil {
-		return nil, ErrNoTask
+		return nil, ErrTaskNotFound
 	}
 	if err != nil {
 		return nil, err
