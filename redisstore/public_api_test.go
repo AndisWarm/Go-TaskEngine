@@ -24,3 +24,22 @@ func TestPublicRedisStoreAcceptsPublicTaskModel(t *testing.T) {
 		t.Fatalf("public Redis store enqueue failed: %v", err)
 	}
 }
+
+func TestPublicRedisErrorsAliasStorageContract(t *testing.T) {
+	tests := []struct {
+		name string
+		got  error
+		want error
+	}{
+		{name: "no task", got: redisstore.ErrNoTask, want: storage.ErrNoTask},
+		{name: "task exists", got: redisstore.ErrTaskExists, want: storage.ErrTaskExists},
+		{name: "invalid transition", got: redisstore.ErrInvalidTransition, want: storage.ErrInvalidTransition},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.got != tt.want {
+				t.Fatalf("error identity differs: got %v, want %v", tt.got, tt.want)
+			}
+		})
+	}
+}

@@ -10,13 +10,16 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"go-taskengine/model"
+	"go-taskengine/storage"
 )
 
 const keyPrefix = "gte:"
 
-var ErrNoTask = errors.New("no processable task")
-var ErrTaskExists = errors.New("task already exists")
-var ErrInvalidTransition = errors.New("invalid task state transition")
+var (
+	ErrNoTask            = storage.ErrNoTask
+	ErrTaskExists        = storage.ErrTaskExists
+	ErrInvalidTransition = storage.ErrInvalidTransition
+)
 
 // Store persists tasks and performs state transitions atomically in Redis.
 type Store struct {

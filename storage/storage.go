@@ -3,22 +3,40 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"go-taskengine/model"
 )
 
+var (
+	// ErrNoTask means an operation has no task to return.
+	ErrNoTask = errors.New("no processable task")
+	// ErrTaskExists means enqueue or schedule found an existing task ID.
+	ErrTaskExists = errors.New("task already exists")
+	// ErrInvalidTransition means the requested durable state transition is not valid.
+	ErrInvalidTransition = errors.New("invalid task state transition")
+)
+
 // TaskStore is the storage contract required by the server worker engine.
 // Implementations must make task state transitions durable and safe for concurrent callers.
 type TaskStore interface {
+	// Enqueue persists an immediately processable task and returns ErrTaskExists for a duplicate ID.
 	Enqueue(context.Context, *model.TaskMessage) error
+	// Schedule persists a delayed task and returns ErrTaskExists for a duplicate ID.
 	Schedule(context.Context, *model.TaskMessage) error
+	// Claim atomically activates one task or returns ErrNoTask when the queue is empty.
 	Claim(context.Context, string, time.Time, time.Duration) (*model.TaskMessage, error)
 	MoveReady(context.Context, time.Time, int, ...string) (int, error)
+	// AckSuccess completes an active task and returns ErrInvalidTransition for a state mismatch.
 	AckSuccess(context.Context, *model.TaskMessage) error
+	// ScheduleRetry moves an active task to retry and returns ErrInvalidTransition for a state mismatch.
 	ScheduleRetry(context.Context, *model.TaskMessage, time.Time, string) error
+	// Archive moves an active task to the archive and returns ErrInvalidTransition for a state mismatch.
 	Archive(context.Context, *model.TaskMessage, string) error
+	// Requeue returns an active task to pending and returns ErrInvalidTransition for a state mismatch.
 	Requeue(context.Context, *model.TaskMessage) error
+	// Get returns ErrNoTask when the requested task does not exist.
 	Get(context.Context, string, string) (*model.TaskMessage, error)
 	ExpiredIDs(context.Context, time.Time, string, int) ([]string, error)
 	PendingCount(context.Context, string) (int64, error)

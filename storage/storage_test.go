@@ -40,3 +40,17 @@ func (publicStore) ExtendLease(context.Context, string, []string, time.Time, tim
 func TestPublicTaskStoreInterfaceIsImplementable(t *testing.T) {
 	var _ TaskStore = publicStore{}
 }
+
+func TestStorageErrorsAreDefinedAndDistinct(t *testing.T) {
+	contractErrors := []error{ErrNoTask, ErrTaskExists, ErrInvalidTransition}
+	for i, err := range contractErrors {
+		if err == nil {
+			t.Fatalf("contract error %d is nil", i)
+		}
+		for j := i + 1; j < len(contractErrors); j++ {
+			if err == contractErrors[j] {
+				t.Fatalf("contract errors %d and %d have the same identity", i, j)
+			}
+		}
+	}
+}
