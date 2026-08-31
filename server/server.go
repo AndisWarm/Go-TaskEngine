@@ -261,7 +261,7 @@ func (s *Server) dispatch(jobs chan<- *model.TaskMessage) {
 			select {
 			case jobs <- msg:
 			case <-s.stopCh:
-				if err := s.store.Requeue(context.Background(), msg); err != nil {
+				if err := s.store.Requeue(s.ctx, msg); err != nil {
 					s.reportError(err)
 				}
 				return
@@ -324,7 +324,7 @@ func (s *Server) process(msg *model.TaskMessage) {
 	defer cancel()
 	err := s.handler.ProcessTask(ctx, msg)
 	if err == nil {
-		if ackErr := s.store.AckSuccess(context.Background(), msg); ackErr != nil {
+		if ackErr := s.store.AckSuccess(s.ctx, msg); ackErr != nil {
 			s.reportError(ackErr)
 			return
 		}
@@ -338,7 +338,7 @@ func (s *Server) process(msg *model.TaskMessage) {
 	}
 	reason := err.Error()
 	if errors.Is(err, ErrNonRetryable) || msg.RetryCount >= msg.MaxRetry {
-		if archiveErr := s.store.Archive(context.Background(), msg, reason); archiveErr != nil {
+		if archiveErr := s.store.Archive(s.ctx, msg, reason); archiveErr != nil {
 			s.reportError(archiveErr)
 			return
 		}
@@ -349,7 +349,7 @@ func (s *Server) process(msg *model.TaskMessage) {
 	}
 	at := time.Now().Add(ExponentialBackoffWithJitter(msg.RetryCount, s.cfg.RetryBaseDelay, s.cfg.RetryMaxDelay, s.cfg.RetryJitter))
 	msg.RetryCount++
-	if retryErr := s.store.ScheduleRetry(context.Background(), msg, at, reason); retryErr != nil {
+	if retryErr := s.store.ScheduleRetry(s.ctx, msg, at, reason); retryErr != nil {
 		s.reportError(retryErr)
 		return
 	}
@@ -374,7 +374,7 @@ func (s *Server) heartbeatLoop() {
 			}
 			s.mu.Unlock()
 			for queue, ids := range byQueue {
-				if err := s.store.ExtendLease(context.Background(), queue, ids, now, s.cfg.LeaseDuration); err != nil {
+				if err := s.store.ExtendLease(s.ctx, queue, ids, now, s.cfg.LeaseDuration); err != nil {
 					s.reportError(err)
 				}
 			}
@@ -392,13 +392,13 @@ func (s *Server) recoveryLoop() {
 			return
 		case now := <-ticker.C:
 			for _, queue := range s.queues {
-				ids, err := s.store.ExpiredIDs(context.Background(), now, queue, 100)
+				ids, err := s.store.ExpiredIDs(s.ctx, now, queue, 100)
 				if err != nil {
 					s.reportError(err)
 					continue
 				}
 				for _, id := range ids {
-					msg, err := s.store.Get(context.Background(), queue, id)
+					msg, err := s.store.Get(s.ctx, queue, id)
 					if err != nil {
 						s.reportError(err)
 						continue
@@ -407,7 +407,7 @@ func (s *Server) recoveryLoop() {
 						continue
 					}
 					if msg.RetryCount >= msg.MaxRetry {
-						if err := s.store.Archive(context.Background(), msg, "task lease expired"); err != nil {
+						if err := s.store.Archive(s.ctx, msg, "task lease expired"); err != nil {
 							s.reportError(err)
 						} else if s.cfg.Metrics != nil {
 							s.cfg.Metrics.RecordArchived()
@@ -415,7 +415,7 @@ func (s *Server) recoveryLoop() {
 						continue
 					}
 					msg.RetryCount++
-					if err := s.store.ScheduleRetry(context.Background(), msg, now.Add(ExponentialBackoffWithJitter(msg.RetryCount-1, s.cfg.RetryBaseDelay, s.cfg.RetryMaxDelay, s.cfg.RetryJitter)), "task lease expired"); err != nil {
+					if err := s.store.ScheduleRetry(s.ctx, msg, now.Add(ExponentialBackoffWithJitter(msg.RetryCount-1, s.cfg.RetryBaseDelay, s.cfg.RetryMaxDelay, s.cfg.RetryJitter)), "task lease expired"); err != nil {
 						s.reportError(err)
 					} else if s.cfg.Metrics != nil {
 						s.cfg.Metrics.RecordRetried()
@@ -539,7 +539,6 @@ func (s *Server) Shutdown() error {
 	}()
 	if !waitUntil(workDone, deadline) {
 		s.cancel()
-		s.requeueActive()
 		return fmt.Errorf("shutdown timeout after %s", s.cfg.ShutdownTimeout)
 	}
 
@@ -551,24 +550,9 @@ func (s *Server) Shutdown() error {
 		close(maintenanceDone)
 	}()
 	if !waitUntil(maintenanceDone, deadline) {
-		s.requeueActive()
 		return fmt.Errorf("shutdown timeout after %s", s.cfg.ShutdownTimeout)
 	}
 	return nil
-}
-
-func (s *Server) requeueActive() {
-	s.mu.Lock()
-	active := make([]*model.TaskMessage, 0, len(s.active))
-	for _, msg := range s.active {
-		active = append(active, msg)
-	}
-	s.mu.Unlock()
-	for _, msg := range active {
-		if err := s.store.Requeue(context.Background(), msg); err != nil {
-			s.reportError(err)
-		}
-	}
 }
 
 // Run starts the server and stops it when ctx is canceled or Stop is called.

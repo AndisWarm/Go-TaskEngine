@@ -9,11 +9,13 @@ import (
 	"time"
 
 	"go-taskengine/client"
+	"go-taskengine/model"
 )
 
-func TestShutdownTimeoutRequeuesRunningTask(t *testing.T) {
+func TestShutdownTimeoutLeavesRunningTaskActiveForLeaseRecovery(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
+	defer close(release)
 	handler := HandlerFunc(func(_ context.Context, _ *TaskMessage) error {
 		close(started)
 		<-release
@@ -34,10 +36,16 @@ func TestShutdownTimeoutRequeuesRunningTask(t *testing.T) {
 	if err := s.Shutdown(); err == nil {
 		t.Fatal("shutdown should report timeout")
 	}
-	if got := producerStorePending(t, s, "default"); got != 1 {
-		t.Fatalf("pending after timeout = %d", got)
+	if got := producerStorePending(t, s, "default"); got != 0 {
+		t.Fatalf("pending after timeout = %d, want 0", got)
 	}
-	close(release)
+	msg, err := s.store.Get(context.Background(), "default", "slow-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.State != model.StateActive {
+		t.Fatalf("state after timeout = %s, want active", msg.State)
+	}
 }
 
 func TestRepeatedStartAndShutdownHaveStableResults(t *testing.T) {

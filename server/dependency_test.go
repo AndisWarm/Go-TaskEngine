@@ -35,3 +35,21 @@ func TestServerProductionCodeDoesNotImportRedisStore(t *testing.T) {
 		}
 	}
 }
+
+func TestServerStorageCallsDoNotUseBackgroundContext(t *testing.T) {
+	source, err := os.ReadFile("server.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	methods := []string{
+		"MoveReady", "PendingCount", "Claim", "Requeue", "AckSuccess",
+		"ScheduleRetry", "Archive", "ExtendLease", "ExpiredIDs", "Get",
+	}
+	for _, method := range methods {
+		forbidden := "s.store." + method + "(context.Background()"
+		if strings.Contains(text, forbidden) {
+			t.Errorf("server storage call %s uses context.Background", method)
+		}
+	}
+}
