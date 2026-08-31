@@ -14,7 +14,6 @@ import (
 	"go-taskengine/internal/timer"
 	"go-taskengine/limiter"
 	"go-taskengine/model"
-	"go-taskengine/redisstore"
 	"go-taskengine/storage"
 )
 
@@ -107,7 +106,7 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// Server runs a fixed-size worker pool over a Redis-backed queue.
+// Server runs a fixed-size worker pool over a durable task store.
 type Server struct {
 	store   storage.TaskStore
 	handler Handler
@@ -251,7 +250,7 @@ func (s *Server) dispatch(jobs chan<- *model.TaskMessage) {
 		claimed := false
 		for _, queue := range s.queues {
 			msg, err := s.store.Claim(s.ctx, queue, time.Now(), s.cfg.LeaseDuration)
-			if errors.Is(err, redisstore.ErrNoTask) {
+			if errors.Is(err, storage.ErrNoTask) {
 				continue
 			}
 			if err != nil {

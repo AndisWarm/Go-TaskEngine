@@ -1,4 +1,4 @@
-// Package model contains task data shared by the client, server, and Redis store.
+// Package model contains task data shared by clients, servers, and storage implementations.
 package model
 
 import (
@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// TaskState is the durable state of a task in Redis.
+// TaskState is the durable state of a task.
 type TaskState string
 
 const (
@@ -21,7 +21,7 @@ const (
 
 func (s TaskState) String() string { return string(s) }
 
-// TaskMessage is the serialized task envelope stored in Redis.
+// TaskMessage is the serialized task envelope persisted by a task store.
 type TaskMessage struct {
 	ID           string        `json:"id"`
 	Type         string        `json:"type"`
