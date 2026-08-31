@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"go-taskengine/internal/model"
 )
 
@@ -47,5 +48,28 @@ func TestStateTransitionsRejectInactiveTask(t *testing.T) {
 	}
 	if err := store.Requeue(ctx, msg); err == nil {
 		t.Fatal("requeue of pending task was accepted")
+	}
+}
+
+func TestExtendLeaseDoesNotRecreateLeaseAfterCompletion(t *testing.T) {
+	store, rdb := newTestStore(t)
+	ctx := context.Background()
+	now := time.UnixMilli(1000)
+	msg := message("stale-heartbeat", 1, now)
+	if err := store.Enqueue(ctx, msg); err != nil {
+		t.Fatal(err)
+	}
+	active, err := store.Claim(ctx, "default", now, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AckSuccess(ctx, active); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ExtendLease(ctx, "default", []string{active.ID}, now.Add(time.Second), time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rdb.ZScore(ctx, LeaseKey("default"), active.ID).Result(); err != redis.Nil {
+		t.Fatalf("completed task lease error = %v, want redis.Nil", err)
 	}
 }

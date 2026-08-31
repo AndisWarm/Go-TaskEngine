@@ -180,6 +180,21 @@ end
 return removed
 `)
 
+var extendLeaseScript = redis.NewScript(`
+local expiresAt = ARGV[1]
+local extended = 0
+for i = 2, #KEYS do
+  local id = ARGV[i]
+  if redis.call("HGET", KEYS[i], "state") == "active" then
+    redis.call("ZADD", KEYS[1], expiresAt, id)
+    extended = extended + 1
+  else
+    redis.call("ZREM", KEYS[1], id)
+  end
+end
+return extended
+`)
+
 func (s *Store) Enqueue(ctx context.Context, msg *model.TaskMessage) error {
 	if err := msg.Validate(); err != nil {
 		return err
@@ -497,12 +512,18 @@ func (s *Store) ExtendLease(ctx context.Context, queue string, ids []string, now
 	if len(ids) == 0 {
 		return nil
 	}
-	pipe := s.client.Pipeline()
+	keys := make([]string, 1, len(ids)+1)
+	keys[0] = LeaseKey(queue)
+	args := make([]interface{}, 1, len(ids)+1)
+	args[0] = now.Add(lease).UnixMilli()
 	for _, id := range ids {
-		pipe.ZAdd(ctx, LeaseKey(queue), redis.Z{Score: float64(now.Add(lease).UnixMilli()), Member: id})
+		keys = append(keys, TaskKey(queue, id))
+		args = append(args, id)
 	}
-	_, err := pipe.Exec(ctx)
-	return err
+	if _, err := extendLeaseScript.Run(ctx, s.client, keys, args...).Int(); err != nil {
+		return fmt.Errorf("extend task leases: %w", err)
+	}
+	return nil
 }
 
 func taskRank(msg *model.TaskMessage) string {
