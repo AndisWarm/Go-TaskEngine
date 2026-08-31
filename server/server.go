@@ -48,7 +48,7 @@ type Config struct {
 	RetryJitter       float64
 	HeartbeatInterval time.Duration
 	RecoveryInterval  time.Duration
-	TokenBucket       *limiter.TokenBucket
+	TokenBucket       limiter.Limiter
 	TokenAmount       float64
 	Metrics           *Metrics
 	// ErrorHandler receives storage and lifecycle errors that the server cannot recover from immediately.
