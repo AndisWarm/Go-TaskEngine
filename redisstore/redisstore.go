@@ -21,6 +21,7 @@ var (
 	TaskKey        = internalredisstore.TaskKey
 	PendingKey     = internalredisstore.PendingKey
 	PendingRankKey = internalredisstore.PendingRankKey
+	SequenceKey    = internalredisstore.SequenceKey
 	ScheduledKey   = internalredisstore.ScheduledKey
 	RetryKey       = internalredisstore.RetryKey
 	ActiveKey      = internalredisstore.ActiveKey

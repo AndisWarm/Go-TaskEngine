@@ -56,7 +56,8 @@ type TaskStore interface {
 	PendingCount(context.Context, string) (int64, error)
 	RetryCount(context.Context, string) (int64, error)
 	ArchivedCount(context.Context, string) (int64, error)
-	ExtendLease(context.Context, string, []string, time.Time, time.Duration) error
+	// ExtendLease renews only attempts whose task ID and AttemptID still own the active lease.
+	ExtendLease(context.Context, string, []*model.TaskMessage, time.Time, time.Duration) error
 }
 
 // DeadLetterStore manages tasks that have been moved to the archived state.

@@ -35,7 +35,7 @@ func (publicStore) ExpiredIDs(context.Context, time.Time, string, int) ([]string
 func (publicStore) PendingCount(context.Context, string) (int64, error)  { return 0, nil }
 func (publicStore) RetryCount(context.Context, string) (int64, error)    { return 0, nil }
 func (publicStore) ArchivedCount(context.Context, string) (int64, error) { return 0, nil }
-func (publicStore) ExtendLease(context.Context, string, []string, time.Time, time.Duration) error {
+func (publicStore) ExtendLease(context.Context, string, []*model.TaskMessage, time.Time, time.Duration) error {
 	return nil
 }
 

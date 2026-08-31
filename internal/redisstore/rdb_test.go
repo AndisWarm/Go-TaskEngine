@@ -3,12 +3,14 @@ package redisstore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
+	"go-taskengine/internal/model"
+
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
-	"go-taskengine/internal/model"
 )
 
 func newTestStore(t *testing.T) (*Store, *redis.Client) {
@@ -130,7 +132,7 @@ func TestExtendLeaseMovesExpiryForward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.ExtendLease(ctx, "default", []string{active.ID}, now, 10*time.Second); err != nil {
+	if err := store.ExtendLease(ctx, "default", []*model.TaskMessage{active}, now, 10*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	if got := rdb.ZScore(ctx, LeaseKey("default"), active.ID).Val(); got != float64(now.Add(10*time.Second).UnixMilli()) {
@@ -159,5 +161,45 @@ func TestGetRejectsTaskRecordWithoutState(t *testing.T) {
 	got, err := store.Get(ctx, "default", msg.ID)
 	if err == nil {
 		t.Fatalf("Get returned task with missing state: %+v", got)
+	}
+}
+
+func TestClaimPreservesFIFOWithinSamePriorityAndMillisecond(t *testing.T) {
+	store, _ := newTestStore(t)
+	ctx := context.Background()
+	now := time.UnixMilli(1000)
+	if err := store.Enqueue(ctx, message("z-first", 1, now)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Enqueue(ctx, message("a-second", 1, now)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Claim(ctx, "default", now, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != "z-first" {
+		t.Fatalf("same-priority FIFO claim = %q, want %q", got.ID, "z-first")
+	}
+}
+
+func TestClaimDistinguishesRankMemberFromTaskID(t *testing.T) {
+	store, _ := newTestStore(t)
+	ctx := context.Background()
+	now := time.UnixMilli(1000)
+	firstID := "z-first"
+	rankShapedID := fmt.Sprintf("%020d:%s", 1, firstID)
+	if err := store.Enqueue(ctx, message(firstID, 1, now)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Enqueue(ctx, message(rankShapedID, 1, now)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Claim(ctx, "default", now, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != firstID {
+		t.Fatalf("rank-shaped task ID changed FIFO claim to %q, want %q", got.ID, firstID)
 	}
 }

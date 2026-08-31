@@ -126,7 +126,13 @@ type Server struct {
 	dispatchDone  chan struct{}
 	workers       sync.WaitGroup
 	maintenance   sync.WaitGroup
-	active        map[string]*model.TaskMessage
+	active        map[activeTaskKey]*model.TaskMessage
+}
+
+type activeTaskKey struct {
+	queue     string
+	id        string
+	attemptID string
 }
 
 type serverState uint8
@@ -149,7 +155,7 @@ func New(store storage.TaskStore, handler Handler, cfg Config) *Server {
 		queues = []string{"default"}
 	}
 	sort.SliceStable(queues, func(i, j int) bool { return cfg.Queues[queues[i]] > cfg.Queues[queues[j]] })
-	return &Server{store: store, handler: handler, cfg: cfg, queues: queues, state: stateNew, active: make(map[string]*model.TaskMessage)}
+	return &Server{store: store, handler: handler, cfg: cfg, queues: queues, state: stateNew, active: make(map[activeTaskKey]*model.TaskMessage)}
 }
 
 func (s *Server) Start() error {
@@ -301,9 +307,9 @@ func (s *Server) waitOrStop(duration time.Duration) bool {
 func (s *Server) worker(jobs <-chan *model.TaskMessage) {
 	defer s.workers.Done()
 	for msg := range jobs {
-		s.trackActive(msg)
+		key := s.trackActive(msg)
 		s.process(msg)
-		s.untrackActive(msg.ID)
+		s.untrackActive(key)
 	}
 }
 
@@ -368,13 +374,17 @@ func (s *Server) heartbeatLoop() {
 			return
 		case now := <-ticker.C:
 			s.mu.Lock()
-			byQueue := make(map[string][]string)
-			for id, msg := range s.active {
-				byQueue[msg.Queue] = append(byQueue[msg.Queue], id)
+			byQueue := make(map[string][]*model.TaskMessage)
+			for key := range s.active {
+				byQueue[key.queue] = append(byQueue[key.queue], &model.TaskMessage{
+					ID:        key.id,
+					Queue:     key.queue,
+					AttemptID: key.attemptID,
+				})
 			}
 			s.mu.Unlock()
-			for queue, ids := range byQueue {
-				if err := s.store.ExtendLease(s.ctx, queue, ids, now, s.cfg.LeaseDuration); err != nil {
+			for queue, tasks := range byQueue {
+				if err := s.store.ExtendLease(s.ctx, queue, tasks, now, s.cfg.LeaseDuration); err != nil {
 					s.reportError(err)
 				}
 			}
@@ -472,12 +482,22 @@ func ExponentialBackoffWithJitter(retryCount int, base, max time.Duration, jitte
 	return time.Duration(result)
 }
 
-func (s *Server) trackActive(msg *model.TaskMessage) {
+func activeKey(msg *model.TaskMessage) activeTaskKey {
+	return activeTaskKey{queue: msg.Queue, id: msg.ID, attemptID: msg.AttemptID}
+}
+
+func (s *Server) trackActive(msg *model.TaskMessage) activeTaskKey {
+	key := activeKey(msg)
 	s.mu.Lock()
-	s.active[msg.ID] = msg
+	s.active[key] = msg
+	s.mu.Unlock()
+	return key
+}
+func (s *Server) untrackActive(key activeTaskKey) {
+	s.mu.Lock()
+	delete(s.active, key)
 	s.mu.Unlock()
 }
-func (s *Server) untrackActive(id string) { s.mu.Lock(); delete(s.active, id); s.mu.Unlock() }
 
 func (s *Server) requestStop() bool {
 	s.mu.Lock()

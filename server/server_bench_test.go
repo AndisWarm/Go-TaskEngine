@@ -7,10 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
 	"go-taskengine/client"
 	"go-taskengine/internal/redisstore"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 func benchmarkTaskID(runID string, index int) string {
@@ -75,6 +76,7 @@ func BenchmarkClientEnqueueRealRedis(b *testing.B) {
 		keys = append(keys,
 			redisstore.PendingKey(queue),
 			redisstore.PendingRankKey(queue),
+			redisstore.SequenceKey(queue),
 			redisstore.ScheduledKey(queue),
 			redisstore.RetryKey(queue),
 			redisstore.ActiveKey(queue),
