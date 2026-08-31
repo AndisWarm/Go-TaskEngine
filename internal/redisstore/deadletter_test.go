@@ -81,8 +81,12 @@ func TestDeadLetterDeleteAndCleanup(t *testing.T) {
 	if err := store.DeleteDeadLetter(ctx, "default", "delete-1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.GetDeadLetter(ctx, "default", "delete-1"); !errors.Is(err, ErrNoTask) {
-		t.Fatalf("deleted lookup error = %v, want ErrNoTask", err)
+	_, err := store.GetDeadLetter(ctx, "default", "delete-1")
+	if !errors.Is(err, ErrTaskNotFound) {
+		t.Fatalf("deleted lookup error = %v, want ErrTaskNotFound", err)
+	}
+	if !errors.Is(err, ErrNoTask) {
+		t.Fatalf("deleted lookup error = %v, want ErrNoTask compatibility", err)
 	}
 	removed, err := store.CleanupDeadLetters(ctx, "default", time.Now().Add(time.Second), 10)
 	if err != nil {

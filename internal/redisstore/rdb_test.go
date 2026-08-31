@@ -2,6 +2,7 @@ package redisstore
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -134,5 +135,29 @@ func TestExtendLeaseMovesExpiryForward(t *testing.T) {
 	}
 	if got := rdb.ZScore(ctx, LeaseKey("default"), active.ID).Val(); got != float64(now.Add(10*time.Second).UnixMilli()) {
 		t.Fatalf("lease expiry = %v", got)
+	}
+}
+
+func TestGetReturnsTaskNotFound(t *testing.T) {
+	store, _ := newTestStore(t)
+	_, err := store.Get(context.Background(), "default", "missing")
+	if !errors.Is(err, ErrTaskNotFound) {
+		t.Fatalf("Get error = %v, want ErrTaskNotFound", err)
+	}
+}
+
+func TestGetRejectsTaskRecordWithoutState(t *testing.T) {
+	store, rdb := newTestStore(t)
+	ctx := context.Background()
+	msg := message("missing-state", 1, time.UnixMilli(1000))
+	if err := store.Enqueue(ctx, msg); err != nil {
+		t.Fatal(err)
+	}
+	if err := rdb.HDel(ctx, TaskKey("default", msg.ID), "state").Err(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get(ctx, "default", msg.ID)
+	if err == nil {
+		t.Fatalf("Get returned task with missing state: %+v", got)
 	}
 }

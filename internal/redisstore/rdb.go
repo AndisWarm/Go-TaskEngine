@@ -339,21 +339,24 @@ func (s *Store) Requeue(ctx context.Context, msg *model.TaskMessage) error {
 }
 
 func (s *Store) Get(ctx context.Context, queue, id string) (*model.TaskMessage, error) {
-	encoded, err := s.client.HGet(ctx, TaskKey(queue, id), "msg").Result()
-	if err == redis.Nil {
+	values, err := s.client.HMGet(ctx, TaskKey(queue, id), "msg", "state").Result()
+	if err != nil {
+		return nil, fmt.Errorf("get task: %w", err)
+	}
+	if len(values) != 2 {
+		return nil, fmt.Errorf("get task: unexpected field count %d", len(values))
+	}
+	if values[0] == nil {
 		return nil, ErrTaskNotFound
 	}
-	if err != nil {
-		return nil, err
+	if values[1] == nil {
+		return nil, errors.New("get task: state is missing")
 	}
 	var msg model.TaskMessage
-	if err := json.Unmarshal([]byte(encoded), &msg); err != nil {
-		return nil, err
+	if err := json.Unmarshal([]byte(fmt.Sprint(values[0])), &msg); err != nil {
+		return nil, fmt.Errorf("decode task: %w", err)
 	}
-	state, err := s.client.HGet(ctx, TaskKey(queue, id), "state").Result()
-	if err == nil {
-		msg.State = model.TaskState(state)
-	}
+	msg.State = model.TaskState(fmt.Sprint(values[1]))
 	return &msg, nil
 }
 
